@@ -4,8 +4,6 @@
 
 ![The Emberline ribbon above the prompt](docs/ribbon.png)
 
-![The details view with the context breakdown and cache card](docs/details.png)
-
 Claude's prompt cache expires an hour after the last request. Come back later and the next message rewrites the whole conversation at full price, or the app swaps your context for a summary. Emberline shows you that clock, and can hold it open for you.
 
 ## What it shows
