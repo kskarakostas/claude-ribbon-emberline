@@ -1,0 +1,13 @@
+{
+  "name": "claude-ribbon-emberline",
+  "description": "Emberline, a live ribbon for Claude Code.",
+  "owner": {
+    "name": "K. S. Karakostas"
+  },
+  "plugins": [
+    {
+      "name": "emberline",
+      "source": "./"
+    }
+  ]
+}

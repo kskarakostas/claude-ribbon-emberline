@@ -1,0 +1,24 @@
+{
+  "name": "emberline",
+  "version": "1.0.0",
+  "description": "A live ribbon above the prompt: usage left, context tokens and mix, cache warm or cold, plan progress, running agents and background work, plus optional keep-warm pings that hold the prompt cache while you are away.",
+  "author": {
+    "name": "K. S. Karakostas"
+  },
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "userConfig": {
+    "warnMinutes": {
+      "type": "string",
+      "title": "Warn before the cache goes cold",
+      "description": "Minutes left when a notification fires for a session over 100k tokens; off for none",
+      "default": "10",
+      "options": [
+        "off",
+        "5",
+        "10"
+      ]
+    }
+  },
+  "repository": "https://github.com/kskarakostas/claude-ribbon-emberline"
+}
