@@ -587,6 +587,27 @@ test('the Agents button shows only while agents run, counting those running', as
   await ui.unmount()
 })
 
+test('the full ribbon shows from the first reply, before any turn has ended', async ($, on) => {
+  await start($, on, { categories: CATEGORIES })
+  await step($)
+
+  const ui = await band($, true, 140)
+  expect(await ui.find({ type: 'Text', text: /^400k · 40%$/ })).toBeDefined()
+  expect(await ui.find({ key: 'warm-pick' })).toBeDefined()
+  expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(true)
+  await ui.unmount()
+})
+
+test('the token count follows each reply during a turn', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await step($)
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /^400k · 40%$/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('running subagents show on the upper row and leave when they end', async ($, on) => {
   const { clock } = await start($, on)
   await reply($)

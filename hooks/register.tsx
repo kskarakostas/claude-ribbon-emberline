@@ -426,14 +426,19 @@ export const register: Register = (on, options) => {
     } else {
       const sent = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
       const hit = sent > 0 ? Math.round((usage.cache_read_input_tokens / sent) * 100) : null
+      // The first reply is the first time the size is known, so read the window once here:
+      // waiting for a turn to end would keep a new session's ribbon bare through its first turn.
+      const held = await read($, cache)
+      const window = held?.window || ((await $.session.usage().catch(() => null))?.context.window ?? 0)
       await update($, cache, c => ({
         lastAt: startedAt,
-        tokens: c?.tokens ?? 0,
-        window: c?.window ?? 0,
+        tokens: sent || (c?.tokens ?? 0),
+        window,
         model: c?.model ?? null,
         hit,
         costUsd: c?.costUsd,
       }))
+      if (!(await read($, mix))) await refreshMix($)
     }
     return result
   })
