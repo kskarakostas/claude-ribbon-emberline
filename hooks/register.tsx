@@ -52,6 +52,8 @@ const SERVED_SHARE = 0.5
 const PING_LOG = 'pingLog'
 const PING_LOG_MAX = 50
 const COMPACT_SKIPS = 'compactSkips'
+/** How often a running turn recounts what fills the context. */
+const MIX_REFRESH_MS = 30_000
 const WARM_USAGE = 'Usage: /keep-warm [1h to 12h | off | ping]. Alone it switches 2h on or off.'
 const WARM_PICKS = ['off', '2h', '6h', '12h']
 /** A timer's ping and a command's cannot overlap. Lost on reload, which ends any ping. */
@@ -285,6 +287,7 @@ export const register: Register = (on, options) => {
   let inTurn = false
   const guard: PingGuard = { isPinging: false }
   let toolSeq = 0
+  let mixAt = -Infinity
 
   on('session.start', async ($, e, next) => {
     // Timer first: a failed read or registration must not stop the band ticking.
@@ -441,7 +444,11 @@ export const register: Register = (on, options) => {
         hit,
         costUsd: c?.costUsd,
       }))
-      if (!(await read($, mix))) await refreshMix($)
+      // A long turn would otherwise leave the panel far behind the ribbon's token count.
+      if (startedAt - mixAt >= MIX_REFRESH_MS) {
+        mixAt = startedAt
+        await refreshMix($)
+      }
     }
     return result
   })

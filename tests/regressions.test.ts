@@ -680,6 +680,22 @@ test('the terminal draws the bars as text', async ($, on) => {
   await ui.unmount()
 })
 
+test('the context mix refreshes during a turn, at most every 30 seconds', async ($, on) => {
+  const { clock, asked } = await start($, on, { categories: CATEGORIES })
+  const counts = () => asked.filter(a => a === 'summary').length
+
+  await step($)
+  const first = counts()
+  expect(first).toBeGreaterThan(0)
+
+  await step($)
+  expect(counts()).toBe(first)
+
+  await clock.advance(31_000)
+  await step($)
+  expect(counts()).toBe(first + 1)
+})
+
 test('running subagents show on the upper row and leave when they end', async ($, on) => {
   const { clock } = await start($, on)
   await reply($)
