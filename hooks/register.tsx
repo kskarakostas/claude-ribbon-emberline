@@ -501,10 +501,11 @@ export const register: Register = (on, options) => {
     const columns = e.props.bodyColumns ?? e.viewport?.columns ?? 100
 
     const crew = await read($, agents)
+    const runningAgents = crew.filter(a => a.status === 'running').length
     const agentsButton =
-      crew.length > 0 ? (
+      runningAgents > 0 ? (
         <Box key="agents" flexShrink={0} marginRight={1}>
-          <Button key="agents-toggle" label={`Agents ${crew.length}`} onPress={() => togglePane($)} />
+          <Button key="agents-toggle" label={`Agents ${runningAgents}`} onPress={() => togglePane($)} />
         </Box>
       ) : null
 
@@ -642,13 +643,13 @@ export const register: Register = (on, options) => {
         )}
       </Box>
     )
-    const spare = columns - ROW_CELLS - WARM_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0)
-    const showFill = kind !== 'wide' || spare >= FILL_CELLS
-    const showHit = kind !== 'wide' || spare >= FILL_CELLS + HIT_CELLS
+    // The tokens always show; only what is left after them is spare.
+    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0)
+    const showHit = kind !== 'wide' || spare >= HIT_CELLS
     const composition = await read($, mix)
-    const showMini = kind === 'wide' && spare >= FILL_CELLS + HIT_CELLS + MINI_CELLS
+    const showMini = kind === 'wide' && spare >= HIT_CELLS + MINI_CELLS
     const mini = Svg && composition && showMini ? contextMiniSvg(composition) : null
-    const costLabel = showMini && facts?.costUsd !== undefined && spare >= FILL_CELLS + HIT_CELLS + MINI_CELLS + COST_CELLS ? ` · ${usd(facts.costUsd)}` : null
+    const costLabel = showMini && facts?.costUsd !== undefined && spare >= HIT_CELLS + MINI_CELLS + COST_CELLS ? ` · ${usd(facts.costUsd)}` : null
     const stored = await read($, fold)
     // Folding needs the card, and the card is a drawing: the terminal stays folded.
     const open = Svg !== null && (stored && stored.mode === mode ? stored.open : cold)
@@ -678,7 +679,7 @@ export const register: Register = (on, options) => {
             <Text key="hit" color={isHitLow ? TEXT : MUTED} bold={isHitLow}>{` · ${hitLabel}`}</Text>
           ) : null,
         ]
-    const fill = fillLabel && showFill ? <Text key="fill" color={TEXT}>{fillLabel}</Text> : null
+    const fill = fillLabel ? <Text key="fill" color={TEXT}>{fillLabel}</Text> : null
 
     const button = Svg ? (
       <Box key="fold" flexShrink={0} alignItems="flex-start">

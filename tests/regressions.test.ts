@@ -261,12 +261,14 @@ test('a wide row short of room keeps tokens and drops the hit share first', asyn
   await ui.unmount()
 })
 
-test('a wide row without room drops the extras so the buttons stay on it', async ($, on) => {
-  await start($, on, { rateLimits: TWO })
+test('a wide row without room keeps the tokens and drops the extras', async ($, on) => {
+  await start($, on, { rateLimits: TWO, categories: CATEGORIES })
   await reply($)
 
   const ui = await band($, false, 100)
-  expect(await ui.find({ type: 'Text', text: /· 30%/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(false)
   expect(await ui.find({ key: 'cache-fold' })).toBeDefined()
   await ui.unmount()
 })
@@ -559,6 +561,30 @@ test('a long category name is cut before it reaches the figures', async () => {
 test('one minute left reads as one minute', async () => {
   const card = cardSvg({ mode: 'warm', idle: '59m', idleMin: 59, tokens: 1000, window: 1_000_000, mine: 'opus' })
   expect(card.alt).toContain('in 1 minute.')
+})
+
+test('the tokens stay on the ribbon at the width the app really uses, with agents running', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
+
+  const ui = await band($, false, 95)
+  expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the Agents button shows only while agents run, counting those running', async ($, on) => {
+  await start($, on)
+  await reply($)
+  const ui = await band($)
+  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
+
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
+  expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents 1')
+
+  await end($, 'answer', 'a1')
+  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
+  await ui.unmount()
 })
 
 test('running subagents show on the upper row and leave when they end', async ($, on) => {

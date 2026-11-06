@@ -12,7 +12,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 
 **The ribbon**
 - Usage left in each limit window, with reset times.
-- Context tokens and share of the window, with a small colour bar of what fills it.
+- Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
 - Cache WARM or COLD, with a countdown and the share of the last request the cache really served.
 - The session's running cost at list price, when the row has room.
 
@@ -26,7 +26,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - Idle time, tokens in cache, and what the next message costs on each model.
 
 **On request**
-- An Agents panel (`/agents-panel`) with each subagent's model, time, tokens and estimated cost.
+- An Agents button while subagents run, and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost.
 - A notification before the cache goes cold, for sessions over 100k tokens.
 
 ## Keep-warm
