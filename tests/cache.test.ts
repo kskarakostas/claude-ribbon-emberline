@@ -28,7 +28,7 @@ test('a warm cache shows Robo, the WARM chip and the minutes left, folded', asyn
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
   // Drawings keep no key in the kit, so they are found by what they say.
   const alts = (await band.findAll({ type: 'Svg' })).map(s => s.props.alt)
-  expect(alts).toEqual(['Robo, bobbing', 'WARM'])
+  expect(alts.filter(a => !String(a).endsWith('% left'))).toEqual(['Robo, bobbing', 'WARM'])
   expect(await band.find({ text: ' 42m' })).toBeDefined()
   expect(await band.find({ key: 'card' })).toBeUndefined()
   expect((await band.find({ key: 'cache-fold' }))?.props.label).toBe('ⓘ')
@@ -112,7 +112,7 @@ test('a cleared session drops the cache until the next reply', async ($, on) => 
   await $.classic.SessionStart({ source: 'clear' })
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
-  expect(await band.findAll({ type: 'Svg' })).toEqual([])
+  expect((await band.findAll({ type: 'Svg' })).filter(s => !String(s.props.alt).endsWith('% left'))).toEqual([])
   expect(await band.find({ text: ' 99% left' })).toBeDefined()
   await band.unmount()
 })

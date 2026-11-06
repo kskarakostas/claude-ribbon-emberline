@@ -8,22 +8,25 @@ import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
 import { capFrom, DEFAULT_CAP_MS, HOUR_MS, LATE_MS, shouldPing } from './warm'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
-  ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, tok, TTL_MIN, TTL_MS, WARN, WORD,
+  ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MIN, TTL_MS, WARN, WORD,
   cardSvg, chipSvg, costOf, familyOf, fmtIdle, kindOf, mineModel, roboSvg, usd,
 } from './cache-art'
 import type { CacheView } from './cache-art'
 
 // A band above the prompt on the app's own background: neutral grey text,
-// dot-matrix bars. Shows how much of each usage window is LEFT, 7-day first, then
-// 5-hour; 7D is orange, 5H is yellow; a window under 15% adds a bold LOW.
+// tick bars. Each usage window's bar fills with what is used, beside the share LEFT,
+// 7-day first, then 5-hour; a window under 15% left turns amber and adds a bold LOW.
 //
-// After the first reply it also shows the prompt cache: WARM (red, Robo bobbing)
+// After the first reply it also shows the prompt cache: WARM (sage, Robo bobbing)
 // for an hour after the last request, then COLD (blue, Robo frozen) with what the
 // next message costs to re-cache. Hide / Show folds the card; warm starts folded,
 // cold starts open, and a choice holds until the cache flips. Zero token cost:
 // it reads the engine's own figures and draws.
 
 const CELLS = 10
+/** Tick bar widths in pixels, for the wide row and for the tight row or the plan. */
+const BAR_W = 100
+const TIGHT_BAR_W = 60
 const LOW_AT = 15
 const TIGHT_CELLS = 6
 /** How often the band redraws, so the countdown and the warm-to-cold flip stay current. */
@@ -68,7 +71,7 @@ const HIT_LOW_AT = 50
 const ROW_CELLS = 26
 const WINDOW_CELLS = 34
 const AGENTS_CELLS = 12
-const WARM_CELLS = 20
+const WARM_CELLS = 16
 const HIT_CELLS = 11
 const FILL_CELLS = 14
 const COST_CELLS = 10
@@ -84,7 +87,7 @@ const clean = (list: readonly Window[]): Window[] =>
 
 const dots = (left: number, cells: number): { on: string; off: string } => {
   const n = Math.max(0, Math.min(cells, Math.round((left / 100) * cells)))
-  return { on: '●'.repeat(n), off: '·'.repeat(cells - n) }
+  return { on: '⣿'.repeat(n), off: '⣀'.repeat(cells - n) }
 }
 
 const fmtReset = (iso: string | undefined, now: number): string => {
@@ -515,6 +518,15 @@ export const register: Register = (on, options) => {
       ) : null
 
     const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
+    // Drawings where the surface has them; text in a terminal.
+    const bar = (key: string, percent: number, cells: number, width: number, colour: string, alt: string) => {
+      if (Svg) {
+        const t = ticksSvg(percent, width, colour)
+        return <Svg key={key} source={t.source} alt={alt} width={t.w} height={t.h} />
+      }
+      const d = dots(percent, cells)
+      return [<Text key={`${key}-on`} color={colour}>{d.on}</Text>, <Text key={`${key}-off`} color={EMPTY}>{d.off}</Text>]
+    }
     const busy = runningLabel(await read($, tools), crew, await read($, background), now)
     const busyPart = busy ? <Text key="busy" color={MUTED}>{busy}</Text> : null
 
@@ -525,13 +537,11 @@ export const register: Register = (on, options) => {
       const done = doneOf(steps)
       const total = steps.steps.length
       const eta = etaMs(steps, now)
-      const d = dots((done / total) * 100, TIGHT_CELLS)
       planRow = (
-        <Box key="plan" flexDirection="row" paddingX={1}>
+        <Box key="plan" flexDirection="row" paddingX={1} alignItems="center">
           <Text color={ACCENT}>▸ </Text>
           <Text color={TEXT}>{clip(step.content, Math.max(12, columns - 34))} </Text>
-          <Text color={ACCENT}>{d.on}</Text>
-          <Text color={EMPTY}>{d.off}</Text>
+          {bar('plan-bar', (done / total) * 100, TIGHT_CELLS, TIGHT_BAR_W, ACCENT, `${done} of ${total} steps done`)}
           <Text color={MUTED}> {done}/{total}</Text>
           {eta ? <Text color={MUTED}> · ~{fmtSpan(eta)} left</Text> : null}
           {busyPart ? sep('sep-busy') : null}
@@ -561,9 +571,9 @@ export const register: Register = (on, options) => {
       const left = Math.max(0, Math.round((100 - w.percentUsed) * 10) / 10)
       return {
         left,
+        used: Math.round(w.percentUsed * 10) / 10,
         col: left < LOW_AT ? WARN : ACCENT,
         name: NAMES[w.kind] ?? w.kind.toUpperCase(),
-        d: dots(left, cells),
         reset: fmtReset(w.resetsAt, now),
       }
     }
@@ -573,10 +583,9 @@ export const register: Register = (on, options) => {
     const wide = (w: Window, i: number) => {
       const p = parts(w)
       return (
-        <Box key={`w-${i}`} flexDirection="row" flexShrink={0}>
+        <Box key={`w-${i}`} flexDirection="row" flexShrink={0} alignItems="center">
           <Text color={MUTED} bold>{p.name} </Text>
-          <Text color={p.col}>{p.d.on}</Text>
-          <Text color={EMPTY}>{p.d.off}</Text>
+          {bar(`bar-${i}`, p.used, cells, BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
           <Text color={p.col} bold> {p.left}% left</Text>
           {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
           {p.reset ? <Text color={MUTED}> · {p.reset}</Text> : null}
@@ -588,10 +597,9 @@ export const register: Register = (on, options) => {
       const p = parts(w)
       return (
         <Box key={`w-${i}`} flexDirection="column" flexShrink={0} marginRight={3}>
-          <Box flexDirection="row">
+          <Box flexDirection="row" alignItems="center">
             <Text color={MUTED} bold>{p.name} </Text>
-            <Text color={p.col}>{p.d.on}</Text>
-            <Text color={EMPTY}>{p.d.off}</Text>
+            {bar(`bar-${i}`, p.used, cells, kind === 'tight' ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
           </Box>
           <Box flexDirection="row">
             <Text color={p.col} bold>{p.left}% left</Text>
@@ -638,13 +646,13 @@ export const register: Register = (on, options) => {
         {Select ? (
           <Select
             key="warm-pick"
-            label="Keep warm"
+            label="Ember"
             value={capValue}
             options={picks.map(value => ({ value, label: value === 'off' ? 'Off' : value }))}
             onSelect={value => pickWarm($, value)}
           />
         ) : (
-          <Button key="warm-toggle" label={capMs === null ? 'Keep warm' : `Keeping ${capMs / HOUR_MS}h`} onPress={() => toggleWarm($)} />
+          <Button key="warm-toggle" label={capMs === null ? 'Ember' : `Ember ${capMs / HOUR_MS}h`} onPress={() => toggleWarm($)} />
         )}
       </Box>
     )

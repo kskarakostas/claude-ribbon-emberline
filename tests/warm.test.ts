@@ -216,6 +216,7 @@ test('the band picker sets the time and switches it off', async ($, on) => {
 
   const ui = await band($)
   const pick = await ui.find({ key: 'warm-pick' })
+  expect(pick?.props.label).toBe('Ember')
   expect(pick?.props.value).toBe('off')
   expect((pick?.props.options as { value: string }[]).map(o => o.value)).toEqual(['off', '2h', '6h', '12h'])
 
@@ -257,9 +258,9 @@ test('a surface with no picker gets the on and off button', async ($, on) => {
   await reply($)
 
   const ui = await $.ui.mount({ plugin: 'emberline', surface: 'mobile', component: 'AbovePrompt', props: PROPS })
-  expect((await ui.find({ key: 'warm-toggle' }))?.props.label).toBe('Keep warm')
+  expect((await ui.find({ key: 'warm-toggle' }))?.props.label).toBe('Ember')
   await ui.press({ key: 'warm-toggle' })
-  expect((await ui.find({ key: 'warm-toggle' }))?.props.label).toBe('Keeping 2h')
+  expect((await ui.find({ key: 'warm-toggle' }))?.props.label).toBe('Ember 2h')
   await ui.unmount()
 })
 

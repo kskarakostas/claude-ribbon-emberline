@@ -3,7 +3,7 @@ import type { On, SessionRateLimit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardSvg } from '../hooks/cache-art'
+import { cardSvg, ticksSvg } from '../hooks/cache-art'
 import { contextPanelSvg } from '../hooks/context-art'
 
 import { applyPlan, etaMs } from '../hooks/plan'
@@ -617,6 +617,66 @@ test('the sections sit left, the controls right, with roomy separators between s
   expect(await ui.find({ key: 'grow' })).toBeDefined()
   for (const key of ['usage', 'context', 'inline', 'controls']) expect(await ui.find({ key })).toBeDefined()
   expect((await ui.findAll({ type: 'Text', text: /^  │  $/ })).length).toBe(2)
+  await ui.unmount()
+})
+
+const litTicks = (source: string, colour: string) => source.split(`fill="${colour}"`).length - 1
+
+test('a tick bar lights its share of the ticks', async () => {
+  expect(ticksSvg(0, 100, '#fff').w).toBe(100)
+  expect(litTicks(ticksSvg(50, 100, '#abc').source, '#abc')).toBe(10)
+  expect(litTicks(ticksSvg(100, 100, '#abc').source, '#abc')).toBe(20)
+  expect(litTicks(ticksSvg(0, 100, '#abc').source, '#abc')).toBe(0)
+})
+
+test('anything above zero lights at least one tick', async () => {
+  expect(litTicks(ticksSvg(1, 100, '#abc').source, '#abc')).toBe(1)
+})
+
+test('usage and progress draw as tick bars in the app', async ($, on) => {
+  await start($, on, { rateLimits: [TWO[0]!] })
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await say($, { done: [1], start: 2 })
+  await reply($)
+  await say($, { items: ITEMS, scope: 'first_task' })
+
+  const ui = await band($, true)
+  const alts = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
+  expect(alts).toContain('7D 64% used, 36% left')
+  expect(alts).toContain('0 of 2 steps done')
+  expect(await ui.find({ type: 'Text', text: /●/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the usage bar fills with what is used, beside the share left', async ($, on) => {
+  await start($, on, { rateLimits: [TWO[0]!] })
+  await reply($)
+
+  const ui = await band($)
+  const usage = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))
+  expect(litTicks(String(usage?.props.source), '#9fb3c8')).toBe(13)
+  expect(await ui.find({ type: 'Text', text: / 36% left/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the progress bar fills with the steps done', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await say($, { done: [1], start: 2 })
+
+  const ui = await band($, true)
+  const plan = (await ui.findAll({ type: 'Svg' })).find(s => s.props.alt === '1 of 2 steps done')
+  expect(litTicks(String(plan?.props.source), '#9fb3c8')).toBe(6)
+  await ui.unmount()
+})
+
+test('the terminal draws the bars as text', async ($, on) => {
+  await start($, on, { rateLimits: [TWO[0]!] })
+  await reply($)
+
+  const ui = await $.ui.mount({ plugin: 'emberline', surface: 'terminal', component: 'AbovePrompt', props: props(false) })
+  expect(await ui.find({ type: 'Text', text: /^⣿+$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^⣀+$/ })).toBeDefined()
   await ui.unmount()
 })
 

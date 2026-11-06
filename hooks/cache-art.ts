@@ -91,6 +91,22 @@ export const svgDoc = (w: number, h: number, body: string, font: boolean): strin
   body +
   '</svg>'
 
+// ---------- Tick bars: thin LED segments, lit from the left ----------
+const TICK_PITCH = 5
+const TICK_W = 3
+const TICK_H = 12
+
+export const ticksSvg = (percent: number, width: number, colour: string): { source: string; w: number; h: number } => {
+  const n = Math.floor(width / TICK_PITCH)
+  const share = Math.max(0, Math.min(100, percent)) / 100
+  const lit = share > 0 ? Math.max(1, Math.round(share * n)) : 0
+  let g = ''
+  for (let i = 0; i < n; i++) {
+    g += `<rect x="${i * TICK_PITCH}" width="${TICK_W}" height="${TICK_H}" rx="0.5" fill="${i < lit ? colour : EMPTY}"/>`
+  }
+  return { source: svgDoc(width, TICK_H, g, false), w: width, h: TICK_H }
+}
+
 // ---------- Rounded chips (WARM, COLD, YOU) ----------
 // A text background can't be rounded, so a chip is a small drawing. The mod can't
 // measure text, so each chip's size was measured once, in the
