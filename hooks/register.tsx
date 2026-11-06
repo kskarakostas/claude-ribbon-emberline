@@ -65,7 +65,7 @@ const DEFAULT_WARN_MIN = 10
 const HIT_LOW_AT = 50
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
 // window; the Agents button; then what the two optional readings need.
-const ROW_CELLS = 20
+const ROW_CELLS = 26
 const WINDOW_CELLS = 34
 const AGENTS_CELLS = 12
 const WARM_CELLS = 20
@@ -514,7 +514,7 @@ export const register: Register = (on, options) => {
         </Box>
       ) : null
 
-    const sep = (key: string) => <Text key={key} color={MUTED}>{' │ '}</Text>
+    const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
     const busy = runningLabel(await read($, tools), crew, await read($, background), now)
     const busyPart = busy ? <Text key="busy" color={MUTED}>{busy}</Text> : null
 
@@ -695,25 +695,32 @@ export const register: Register = (on, options) => {
 
     let rows
     if (kind === 'wide') {
+      // Four sections, with the free space shared evenly between them and the separators.
       rows = (
-        <Box key="row" flexDirection="row" paddingX={1} alignItems="center">
-          {usage}
+        <Box key="row" flexDirection="row" paddingX={1} alignItems="center" justifyContent="space-between">
+          <Box key="usage" flexDirection="row" flexShrink={0}>{usage}</Box>
           {fill ? sep('sep-fill') : null}
-          {fill}
-          {mini && Svg ? <Text key="mini-gap"> </Text> : null}
-          {mini && Svg ? <Svg key="mix" source={mini.source} alt={mini.alt} width={mini.w} height={mini.h} /> : null}
-          {costLabel ? <Text key="cost" color={MUTED}>{costLabel}</Text> : null}
+          {fill ? (
+            <Box key="context" flexDirection="row" flexShrink={0} alignItems="center">
+              {fill}
+              {mini && Svg ? <Text key="mini-gap"> </Text> : null}
+              {mini && Svg ? <Svg key="mix" source={mini.source} alt={mini.alt} width={mini.w} height={mini.h} /> : null}
+              {costLabel ? <Text key="cost" color={MUTED}>{costLabel}</Text> : null}
+            </Box>
+          ) : null}
+          {open ? null : sep('sep-cache')}
           {open ? null : (
-            <Box key="inline" flexDirection="row" flexShrink={0} marginRight={2} alignItems="center">
-              {sep('sep-cache')}
+            <Box key="inline" flexDirection="row" flexShrink={0} alignItems="center">
               {badge}
               {summary}
             </Box>
           )}
-          {grow}
-          {warmButton}
-          {agentsButton}
-          {button}
+          {sep('sep-controls')}
+          <Box key="controls" flexDirection="row" flexShrink={0} alignItems="center">
+            {warmButton}
+            {agentsButton}
+            {button}
+          </Box>
         </Box>
       )
     } else if (kind === 'stacked') {

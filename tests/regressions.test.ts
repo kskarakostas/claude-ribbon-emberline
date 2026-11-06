@@ -412,7 +412,7 @@ test('the mix fits before the cost does', async ($, on) => {
   await start($, on, { cost: 18.2, categories: CATEGORIES })
   await reply($)
 
-  const ui = await band($, false, 112)
+  const ui = await band($, false, 118)
   expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(true)
   expect(await ui.find({ type: 'Text', text: /\$18/ })).toBeUndefined()
   await ui.unmount()
@@ -462,7 +462,7 @@ test('a short row drops the cost before anything else', async ($, on) => {
   await start($, on, { cost: 18.2 })
   await reply($)
 
-  const ui = await band($, false, 100)
+  const ui = await band($, false, 106)
   expect(await ui.find({ type: 'Text', text: /\$18/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeDefined()
   await ui.unmount()
@@ -605,6 +605,18 @@ test('the token count follows each reply during a turn', async ($, on) => {
 
   const ui = await band($, true)
   expect(await ui.find({ type: 'Text', text: /^400k · 40%$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the four sections spread evenly with roomy separators', async ($, on) => {
+  await start($, on, { rateLimits: [TWO[0]!] })
+  await reply($)
+
+  const ui = await band($, false, 140)
+  expect((await ui.find({ key: 'row' }))?.props.justifyContent).toBe('space-between')
+  expect(await ui.find({ key: 'grow' })).toBeUndefined()
+  for (const key of ['usage', 'context', 'inline', 'controls']) expect(await ui.find({ key })).toBeDefined()
+  expect((await ui.findAll({ type: 'Text', text: /^  │  $/ })).length).toBe(3)
   await ui.unmount()
 })
 
