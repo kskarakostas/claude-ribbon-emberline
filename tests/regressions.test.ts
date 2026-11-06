@@ -608,15 +608,15 @@ test('the token count follows each reply during a turn', async ($, on) => {
   await ui.unmount()
 })
 
-test('the four sections spread evenly with roomy separators', async ($, on) => {
+test('the sections sit left, the controls right, with roomy separators between sections', async ($, on) => {
   await start($, on, { rateLimits: [TWO[0]!] })
   await reply($)
 
   const ui = await band($, false, 140)
-  expect((await ui.find({ key: 'row' }))?.props.justifyContent).toBe('space-between')
-  expect(await ui.find({ key: 'grow' })).toBeUndefined()
+  expect((await ui.find({ key: 'row' }))?.props.justifyContent).toBeUndefined()
+  expect(await ui.find({ key: 'grow' })).toBeDefined()
   for (const key of ['usage', 'context', 'inline', 'controls']) expect(await ui.find({ key })).toBeDefined()
-  expect((await ui.findAll({ type: 'Text', text: /^  │  $/ })).length).toBe(3)
+  expect((await ui.findAll({ type: 'Text', text: /^  │  $/ })).length).toBe(2)
   await ui.unmount()
 })
 

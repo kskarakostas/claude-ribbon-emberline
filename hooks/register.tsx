@@ -695,9 +695,8 @@ export const register: Register = (on, options) => {
 
     let rows
     if (kind === 'wide') {
-      // Four sections, with the free space shared evenly between them and the separators.
       rows = (
-        <Box key="row" flexDirection="row" paddingX={1} alignItems="center" justifyContent="space-between">
+        <Box key="row" flexDirection="row" paddingX={1} alignItems="center">
           <Box key="usage" flexDirection="row" flexShrink={0}>{usage}</Box>
           {fill ? sep('sep-fill') : null}
           {fill ? (
@@ -715,7 +714,7 @@ export const register: Register = (on, options) => {
               {summary}
             </Box>
           )}
-          {sep('sep-controls')}
+          {grow}
           <Box key="controls" flexDirection="row" flexShrink={0} alignItems="center">
             {warmButton}
             {agentsButton}
