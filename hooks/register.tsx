@@ -408,6 +408,9 @@ const missedIfDue = async ($: EngineInterface, warnMin: number | null, isQuiet: 
   const c = await read($, cache)
   const now = await $.clock.now()
   if (!c || c.lastAt <= 0 || now - c.lastAt < PING_MS) return
+  // Past the window, a turn or ping in flight may yet move the cache's time: judge once it is done.
+  // Inside the window a busy tick still claims it, since a tick did run there.
+  if (now - c.lastAt >= LATE_MS && !isQuiet()) return
   if ((await read($, seenFor)) === c.lastAt) return // claimed already: the common case, with no write
   let isFirst = false
   // One claim per cache cycle, inside the update, so ticks that wake together tell once.
@@ -415,8 +418,7 @@ const missedIfDue = async ($: EngineInterface, warnMin: number | null, isQuiet: 
     isFirst = s !== c.lastAt
     return c.lastAt
   })
-  // A turn or a ping in flight is about to touch the cache: the cycle is claimed, nothing to tell.
-  if (!isFirst || now - c.lastAt < LATE_MS || !isQuiet()) return
+  if (!isFirst || now - c.lastAt < LATE_MS) return
   const w = await read($, warm)
   const ttlMs = await read($, ttl)
   if (w.capMs === null || warnMin === null || c.tokens < WARN_TOKENS || !canHold(c, ttlMs)) return

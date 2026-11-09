@@ -1200,3 +1200,18 @@ test('no missed-ping notice when a turn is already under way as the timer wakes:
   await clock.advance(2 * MIN)
   expect(sent.filter(t => t.includes('missed'))).toEqual([])
 })
+
+test('a late wake during a turn that ends with no request is still told once the turn is done', async ($, on) => {
+  const { clock, sent, span } = await start($, on, GOOD, NOW, true)
+  await reply($)
+  await command($, '2h')
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 70 * MIN
+  await clock.advance(69.5 * MIN)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 't', text: 'hi' })
+  await clock.advance(MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ reason: 'error', answer: '', durationMs: 1000, isAborted: true, turnId: 't' })
+  await clock.advance(MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens went cold at ${clockAt(NOW + HOUR_MS)}`])
+})
