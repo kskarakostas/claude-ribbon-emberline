@@ -26,6 +26,8 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
 
+![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
+
 **On request**
 - An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` before any has run) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
@@ -33,6 +35,8 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no card), with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
 
 ## Keep-warm
+
+<img src="docs/picker.png" alt="The Ember picker: Off, 1h to 12h, three until times, Custom…, Ping now and Status" width="198" align="right">
 
 Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`. The picker also offers `Until` the next three full hours at least an hour away, and `Custom…`, which asks for any length or time the command takes. `/keep-warm until 18:30` takes any clock time within 12 hours: keep-warm holds to that time whatever you do in between, then switches off within the next half minute. `Ping now` in the same picker pings at once and shows what the cache served; `Status`, or `/keep-warm status`, says what keep-warm and the cache are doing. The mobile app has no picker: its row has an on and off button for 2h, and behind `ⓘ` a button steps through the lengths, beside `Ping now`, `Status` and the settings.
 
