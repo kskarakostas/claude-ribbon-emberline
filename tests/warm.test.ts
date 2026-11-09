@@ -954,3 +954,28 @@ test('caps parse to hours within limits', async () => {
   expect(capFrom('0h')).toBeNull()
   expect(capFrom('2')).toBeNull()
 })
+
+test('a ping missed while the computer slept is told, once, with when the cache goes cold', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await command($, '2h')
+  // The timer wakes at 58.5 idle minutes: too late to ping without paying for a rebuild.
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
+  await clock.advance(30_000)
+  await clock.advance(30_000)
+  const coldAt = new Date(NOW - 3510_000 + HOUR_MS)
+  const at = `${String(coldAt.getHours()).padStart(2, '0')}:${String(coldAt.getMinutes()).padStart(2, '0')}`
+  expect(sent.filter(t => t.includes('missed'))).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens go cold about ${at}`])
+})
+
+test('no missed-ping notice when keep-warm is off, or its time ran out before the ping was due', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '1h') // one ping at 50 minutes; the next would fall past the hour
+  await clock.advance(115 * MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+  await command($, 'off')
+  await reply($)
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
+  await clock.advance(MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})

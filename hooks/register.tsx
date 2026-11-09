@@ -5,7 +5,7 @@ import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
-import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
+import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
 import { runOutAt, withSample } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceSample, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
@@ -48,6 +48,8 @@ const mix = atom({ plugin: 'emberline', key: 'mix' } as const, null as ContextMi
 const warnedFor = atom({ plugin: 'emberline', key: 'warnedFor' } as const, 0)
 /** The end of the keep-warm window the "Ember ended" notice last fired for, so each window tells once. */
 const endedFor = atom({ plugin: 'emberline', key: 'endedFor' } as const, 0)
+/** The `lastAt` the missed-ping notice last fired for, so each cache cycle tells once. */
+const missedFor = atom({ plugin: 'emberline', key: 'missedFor' } as const, 0)
 /** This session's pings, for the card. */
 const ledger = atom({ plugin: 'emberline', key: 'ledger' } as const, null as Ledger | null)
 
@@ -363,6 +365,29 @@ const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<voi
   if (!sent?.isSent) $.ui.toast(text)
 }
 
+/**
+ * Tells the person once when keep-warm was on and its ping fell due, but the timer woke too
+ * late to send it (a sleeping computer): the cache it was holding will lapse.
+ */
+const missedIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
+  const w = await read($, warm)
+  const c = await read($, cache)
+  if (w.capMs === null || !c || warnMin === null) return
+  const ttlMs = await read($, ttl)
+  const now = await $.clock.now()
+  const end = w.untilAt ?? w.lastPromptAt + w.capMs
+  // Due inside the window, and now past the last moment a ping could go.
+  if (!canHold(c, ttlMs) || c.lastAt + PING_MS >= end || now - c.lastAt < LATE_MS) return
+  if ((await read($, missedFor)) === c.lastAt) return
+  await update($, missedFor, () => c.lastAt)
+  if (now >= end) await update($, endedFor, () => end) // one notice for the window, not two
+  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
+  const coldAt = c.lastAt + ttlMs
+  const text = `${project}: Ember missed its ping, likely while the computer slept. ${tok(c.tokens)} tokens ${now < coldAt ? 'go cold about' : 'went cold at'} ${fmtClock(coldAt)}`
+  const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
+  if (!sent?.isSent) $.ui.toast(text)
+}
+
 const toggleWarm = async ($: EngineInterface): Promise<void> => {
   const w = await read($, warm)
   await setCap($, w.capMs === null ? DEFAULT_CAP_MS : null)
@@ -451,6 +476,7 @@ export const register: Register = (on, options) => {
         await pingIfDue($, guard, inTurn)
         // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
         if (!inTurn && !guard.isPinging) await warnIfDue($, warnMin)
+        if (!inTurn && !guard.isPinging) await missedIfDue($, warnMin)
         if (!inTurn && !guard.isPinging) await endIfDue($, warnMin)
         // After the notice had its chance, and whatever the turn or settings: an until time ends on time.
         await expireUntil($)
@@ -563,6 +589,7 @@ export const register: Register = (on, options) => {
       if (e.source === 'clear') {
         await update($, warm, w => ({ ...w, capMs: null }))
         await update($, ledger, () => null) // a new conversation starts a new tally
+        await update($, agents, () => []) // and has run no subagents
       }
     } else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
       const now = await $.clock.now()

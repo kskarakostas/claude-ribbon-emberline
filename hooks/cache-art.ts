@@ -268,9 +268,10 @@ export const cardSvg = (v: CacheView, ember: EmberView | null = null, note: stri
   MODELS.forEach((m, i) => {
     const x = 392 + i * 82
     const mine = m.id === v.mine
-    // Every ref is in the price table, and a family match means the session's model is too.
-    const cost = nextCost(mine ? v.model : m.ref, mode, v.tokens, v.ttlMin) ?? nextCost(m.ref, mode, v.tokens, v.ttlMin) ?? 0
-    g += t(x, 36, usd(cost), 14, mine ? 700 : 500, mine ? TEXT : MUTED)
+    // Every ref is in the price table; a session version the table does not list shows its family's, marked as an estimate.
+    const own = mine ? nextCost(v.model, mode, v.tokens, v.ttlMin) : null
+    const cost = own ?? nextCost(m.ref, mode, v.tokens, v.ttlMin) ?? 0
+    g += t(x, 36, (mine && own === null ? '≈' : '') + usd(cost), 14, mine ? 700 : 500, mine ? TEXT : MUTED)
     g += t(x, 50, m.NAME, 10, 700, mine ? hue : MUTED, 'start', 0.6)
   })
 

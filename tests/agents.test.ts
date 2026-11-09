@@ -29,6 +29,7 @@ const start = async ($: Engine, on: On) => {
   on('command.register', () => ({ value: { command: 'agents-panel' } }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000000 }, rateLimits: [] } }))
   on('agent.spawn', () => ({ model: MODEL, agentId: 'a1' }) as never)
+  on('classic.SessionStart', () => ({}) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('turn.step', async function* () {
     return {
@@ -111,6 +112,13 @@ const PRICED: readonly (readonly [string, number])[] = [
   ['claude-sonnet-5-5', 2 + 0.2 + 4],
   ['claude-sonnet-4-6', 3 + 0.3 + 6],
   ['claude-haiku-4-5', 1 + 0.1 + 2],
+  ['claude-mythos-5-1', 10 + 0.25 + 20],
+  ['claude-fable-5', 10 + 1 + 20],
+  ['claude-opus-4-5-20251101', 5 + 0.5 + 10],
+  ['anthropic.claude-opus-4-8-v1:0', 5 + 0.5 + 10],
+  ['claude-opus-4-7@20260101', 5 + 0.5 + 10],
+  ['claude-sonnet-5', 2 + 0.2 + 4],
+  ['claude-sonnet-5-5[1m]', 2 + 0.2 + 4],
 ]
 for (const [model, want] of PRICED) {
   test(`list price for ${model}`, async () => {
@@ -122,8 +130,27 @@ test('an unknown model has no price rather than a guess', async () => {
   expect(costOf('some-new-model', MTOK)).toBeNull()
 })
 
+test('a version the table does not list has no price, even in a known family', async () => {
+  for (const model of ['claude-opus-5-6', 'claude-haiku-5-6', 'claude-sonnet-6', 'claude-fable-5-2', 'claude-opus-4-1', 'claude-mythos-preview']) {
+    expect(costOf(model, MTOK)).toBeNull()
+  }
+})
+
 test('Haiku 5.5 is priced by prompt size: the low rate up to 100k, the high rate above', async () => {
   const small = { input_tokens: 50_000, output_tokens: 1_000_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
   expect(Math.abs((costOf('claude-haiku-5-5', small) ?? 0) - (0.05 * 0.1 + 0.5)) < 1e-6).toBe(true)
   expect(Math.abs((costOf('claude-haiku-5-5', MTOK) ?? 0) - (0.5 + 0.05 + 1)) < 1e-6).toBe(true)
+})
+
+test('/clear empties the Agents panel and drops its button: a new conversation has run no subagents', async ($, on) => {
+  await start($, on)
+  await spawn($)
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+
+  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
+  expect(await band.find({ key: 'agents-toggle' })).toBeUndefined()
+  await band.unmount()
+  const ui = await pane($)
+  expect(await ui.find({ text: /No subagents yet/ })).toBeDefined()
+  await ui.unmount()
 })

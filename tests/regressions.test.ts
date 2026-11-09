@@ -711,3 +711,9 @@ test('running subagents show on the upper row and leave when they end', async ($
   expect(await ui.find({ type: 'Text', text: /1 agent/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('the card marks its own column as an estimate for a version the price table does not list', async () => {
+  const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', ttlMin: 60 } as const
+  expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('≈$0.06')
+  expect(cardSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('≈')
+})
