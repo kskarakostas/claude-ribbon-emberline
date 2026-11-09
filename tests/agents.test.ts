@@ -121,3 +121,9 @@ for (const [model, want] of PRICED) {
 test('an unknown model has no price rather than a guess', async () => {
   expect(costOf('some-new-model', MTOK)).toBeNull()
 })
+
+test('Haiku 5.5 is priced by prompt size: the low rate up to 100k, the high rate above', async () => {
+  const small = { input_tokens: 50_000, output_tokens: 1_000_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+  expect(Math.abs((costOf('claude-haiku-5-5', small) ?? 0) - (0.05 * 0.1 + 0.5)) < 1e-6).toBe(true)
+  expect(Math.abs((costOf('claude-haiku-5-5', MTOK) ?? 0) - (0.5 + 0.05 + 1)) < 1e-6).toBe(true)
+})

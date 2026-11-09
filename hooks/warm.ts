@@ -1,7 +1,7 @@
 // When a keep-warm ping is due. Pure.
 
 export const HOUR_MS = 60 * 60_000
-/** Longest idle window a person can ask for. PROPOSED: about 33h of pings pay for one Opus re-cache. */
+/** Longest idle window a person can ask for. PROPOSED: pings pay for one re-cache after about 33h on Opus 5.5, 17h on most others. */
 const MAX_CAP_HOURS = 12
 export const DEFAULT_CAP_MS = 2 * HOUR_MS
 /** Idle time at which a ping fires. PROPOSED: 10 minutes of margin under the hour. */
@@ -36,4 +36,23 @@ export const capFrom = (text: string): number | null => {
   if (!hours) return null
   const n = Number(hours)
   return n >= 1 && n <= MAX_CAP_HOURS ? n * HOUR_MS : null
+}
+
+/** How long keep-warm has left, or 0 when no ping can come: off, busy, too late, or past the cap. */
+export const emberLeftMs = (f: PingFacts): number => {
+  if (f.capMs === null || f.isBusy || f.now - f.lastAt >= LATE_MS) return 0
+  return Math.max(0, f.capMs - (f.now - f.lastPromptAt))
+}
+
+/**
+ * When the cache goes cold if only pings touch it: an hour after the last ping the cap
+ * still allows. Pings land a tick late, so this is about, not exact.
+ */
+export const coldAtMs = (f: PingFacts): number => {
+  let last = f.lastAt
+  if (emberLeftMs(f) > 0 && f.capMs !== null) {
+    const end = f.lastPromptAt + f.capMs
+    while (last + PING_MS < end) last += PING_MS
+  }
+  return last + HOUR_MS
 }

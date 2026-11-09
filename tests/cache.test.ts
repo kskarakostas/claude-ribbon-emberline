@@ -116,3 +116,53 @@ test('a cleared session drops the cache until the next reply', async ($, on) => 
   expect(await band.find({ text: ' 99% left' })).toBeDefined()
   await band.unmount()
 })
+
+const terminalBand = async ($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1], start: Record<string, unknown>) => {
+  mock.store(on)
+  mock.clock(on, { now: NOW })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000000 }, rateLimits: WINDOWS } }))
+  on('classic.SessionStart', () => ({}))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', ...start })
+  return $.ui.mount({ plugin: 'emberline', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+}
+
+test('an older model in a family is priced at its own rate, not the newest one', async ($, on) => {
+  // Opus 4.8: 770k tokens at the 1-hour write price, 2 x $5 per million.
+  const band = await terminalBand($, on, { seconds_since_last_response: COLD_IDLE, context_tokens: 770000, model: 'claude-opus-4-8' })
+  expect(await band.find({ text: '$7.70' })).toBeDefined()
+  await band.unmount()
+})
+
+test('Haiku 5.5 past 100k prompt tokens is priced at its higher rate', async ($, on) => {
+  // 300k tokens at the 1-hour write price, 2 x $0.50 per million.
+  const band = await terminalBand($, on, { seconds_since_last_response: COLD_IDLE, context_tokens: 300000, model: 'claude-haiku-5-5' })
+  expect(await band.find({ text: '$0.30' })).toBeDefined()
+  await band.unmount()
+})
+
+test('a resume the engine says outlived the cache shows cold, even inside the hour', async ($, on) => {
+  const band = await terminalBand($, on, { seconds_since_last_response: 600, context_tokens: 770000, model: 'claude-opus-5-5', prompt_cache_likely_expired: true })
+  expect(await band.find({ text: ' COLD ' })).toBeDefined()
+  await band.unmount()
+})
+
+test('a 5-minute cache prices its cold write at 1.25 times input', async ($, on) => {
+  mock.store(on)
+  mock.clock(on, { now: NOW })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000000 }, rateLimits: WINDOWS } }))
+  on('classic.SessionStart', () => ({}))
+  on('classic.PostModelSwitch', () => ({}))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: COLD_IDLE, context_tokens: 800000, model: 'claude-opus-5-5' })
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: 'claude-opus-5-5', to_model: 'claude-opus-5-5', requested_model: null, source: 'resume',
+    context_tokens: 800000, prompt_cache_warm: false, cache_ttl: '5m', estimated_cache_write_usd: 4, pricing: 'catalog',
+  })
+  // Opus 5.5: 800k tokens at 1.25 x $4 per million.
+  const band = await $.ui.mount({ plugin: 'emberline', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  expect(await band.find({ text: '$4.00' })).toBeDefined()
+  await band.unmount()
+})

@@ -5,13 +5,13 @@ import { addUsage, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
-import { capFrom, DEFAULT_CAP_MS, HOUR_MS, LATE_MS, shouldPing } from './warm'
+import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, shouldPing } from './warm'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
-  ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MIN, TTL_MS, WARN, WORD,
-  cardSvg, chipSvg, costOf, familyOf, fmtIdle, kindOf, mineModel, roboSvg, usd,
+  ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
+  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, kindOf, nextCost, roboSvg, usd,
 } from './cache-art'
-import type { CacheView } from './cache-art'
+import type { CacheView, EmberView } from './cache-art'
 
 // A band above the prompt on the app's own background: neutral grey text,
 // tick bars. Each usage window's bar fills with what is used, beside the share LEFT,
@@ -45,10 +45,14 @@ const mix = atom({ plugin: 'emberline', key: 'mix' } as const, null as ContextMi
 const warnedFor = atom({ plugin: 'emberline', key: 'warnedFor' } as const, 0)
 
 const warm = atom({ plugin: 'emberline', key: 'warm' } as const, { capMs: null, lastPromptAt: 0 } as Warm)
+/** How long this session's cache lives, as the engine last reported it on a model switch or resume. */
+const ttl = atom({ plugin: 'emberline', key: 'ttl' } as const, TTL_MS)
 
 const PING_PROMPT = 'Keep-alive ping, not a task. Reply with only the word: ok'
 /** A ping must read at least this share of the context, or the cache was not there. */
 const SERVED_SHARE = 0.5
+/** A ping not answered by now is abandoned: keep-warm stops and the next ping is free to run. PROPOSED. */
+const PING_TIMEOUT_MS = 3 * 60_000
 const PING_LOG = 'pingLog'
 const PING_LOG_MAX = 50
 const COMPACT_SKIPS = 'compactSkips'
@@ -78,8 +82,8 @@ const HIT_CELLS = 11
 const FILL_CELLS = 14
 const COST_CELLS = 10
 const MINI_CELLS = 9
-/** What ` ember 1h 12m` spends beyond the ` 42m` it replaces. */
-const EMBER_CELLS = 9
+/** The cells of the ` 42m` countdown that Ember's text replaces. */
+const COUNTDOWN_CELLS = 4
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
 const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
@@ -107,18 +111,23 @@ const fmtReset = (iso: string | undefined, now: number): string => {
 }
 
 /** What the cache drawings read, or null until a request and its context size are known. */
-export const viewOf = (c: CacheFacts | null, now: number): CacheView | null => {
+export const viewOf = (c: CacheFacts | null, now: number, ttlMs: number = TTL_MS): CacheView | null => {
   if (!c || c.lastAt <= 0 || c.tokens <= 0) return null
   const idleMs = Math.max(0, now - c.lastAt)
   return {
-    mode: idleMs >= TTL_MS ? 'cold' : 'warm',
+    mode: idleMs >= ttlMs || c.isCold ? 'cold' : 'warm',
     idle: fmtIdle(idleMs),
     idleMin: Math.floor(idleMs / 60000),
     tokens: c.tokens,
     window: c.window,
     mine: familyOf(c.model),
+    model: c.model,
+    ttlMin: Math.round(ttlMs / 60_000),
   }
 }
+
+/** Whether keep-warm can hold this cache: it is still the live one, and it lives the full hour pings are timed for. */
+const canHold = (c: CacheFacts, ttlMs: number): boolean => !c.isCold && ttlMs >= TTL_MS
 
 const warnMinutesOf = (value: unknown): number | null => {
   if (value === 'off') return null
@@ -136,8 +145,11 @@ const togglePane = async ($: EngineInterface): Promise<void> => {
 
 const warnIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
   const c = await read($, cache)
-  if (warnMin === null || !c || c.tokens < WARN_TOKENS) return
-  const leftMs = TTL_MS - ((await $.clock.now()) - c.lastAt)
+  if (warnMin === null || !c || c.isCold || c.tokens < WARN_TOKENS) return
+  const ttlMs = await read($, ttl)
+  // A cache whose whole life fits in the warning window would warn after every reply.
+  if (ttlMs <= warnMin * 60_000) return
+  const leftMs = ttlMs - ((await $.clock.now()) - c.lastAt)
   if (leftMs <= 0 || leftMs > warnMin * 60_000 || (await read($, warnedFor)) === c.lastAt) return
   await update($, warnedFor, () => c.lastAt)
   const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
@@ -163,28 +175,41 @@ const recordPing = async ($: EngineInterface, record: PingRecord): Promise<void>
 
 /** One fork over the transcript. Resolves the tokens the cache served, or null and switches keep-warm off. */
 const ping = async ($: EngineInterface, guard: PingGuard): Promise<number | null> => {
-  const startedAt = await $.clock.now()
-  const tokens = (await read($, cache))?.tokens ?? 0
+  // Claimed before any await; callers check it with no await in between, so only one fork runs.
   guard.isPinging = true
   let served = 0
+  let isTimedOut = false
+  let timer: { cancel(): void } | undefined
+  let startedAt = 0
+  let tokens = 0
   try {
-    const r = await $.model.fork({ prompt: PING_PROMPT })
+    startedAt = await $.clock.now()
+    tokens = (await read($, cache))?.tokens ?? 0
+    // A fork cannot be cancelled, so a late one may still bill; the timeout only stops waiting.
+    const late = new Promise<null>(resolve => {
+      timer = $.clock.after(PING_TIMEOUT_MS, () => resolve(null))
+    })
+    const r = await Promise.race([$.model.fork({ prompt: PING_PROMPT }), late])
+    if (r === null) isTimedOut = true
     // A reply with no text still completed; an error's usage says nothing about the cache.
-    const isComplete = r.isAnswered || r.reason === 'empty-reply'
-    served = isComplete && 'usage' in r ? r.usage.cache_read_input_tokens : 0
+    else if ((r.isAnswered || r.reason === 'empty-reply') && 'usage' in r) served = r.usage.cache_read_input_tokens
   } catch {
     served = 0
   } finally {
     guard.isPinging = false
+    timer?.cancel()
   }
   const isServed = served > 0 && served >= tokens * SERVED_SHARE
   await recordPing($, { at: startedAt, served, tokens, isServed })
   if (isServed) {
-    await update($, cache, c => (c ? { ...c, lastAt: startedAt } : c))
+    // A reply that landed while the ping was out touched the cache later; keep its time.
+    await update($, cache, c => (c ? { ...c, lastAt: Math.max(c.lastAt, startedAt) } : c))
     return served
   }
   await update($, warm, w => ({ ...w, capMs: null }))
-  const text = `Keep-warm stopped: the ping read ${Math.round(served / 1000)}k of ${Math.round(tokens / 1000)}k tokens from the cache`
+  const text = isTimedOut
+    ? `Keep-warm stopped: the ping did not answer in ${PING_TIMEOUT_MS / 60_000} minutes`
+    : `Keep-warm stopped: the ping read ${Math.round(served / 1000)}k of ${Math.round(tokens / 1000)}k tokens from the cache`
   const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
   if (!sent?.isSent) $.ui.toast(text)
   return null
@@ -192,11 +217,11 @@ const ping = async ($: EngineInterface, guard: PingGuard): Promise<number | null
 
 const pingIfDue = async ($: EngineInterface, guard: PingGuard, isBusy: boolean): Promise<void> => {
   const c = await read($, cache)
-  if (!c || guard.isPinging) return
+  if (!c || guard.isPinging || !canHold(c, await read($, ttl))) return
   const w = await read($, warm)
-  if (shouldPing({ now: await $.clock.now(), lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy })) {
-    await ping($, guard)
-  }
+  const isDue = shouldPing({ now: await $.clock.now(), lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy })
+  // Checked again with no await before ping claims it, so a ping started meanwhile wins.
+  if (isDue && !guard.isPinging) await ping($, guard)
 }
 
 const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard): Promise<string> => {
@@ -205,9 +230,11 @@ const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard): 
   if (arg === 'ping') {
     const c = await read($, cache)
     if (!c || guard.isPinging) return 'Nothing to ping yet.'
-    if ((await $.clock.now()) - c.lastAt >= LATE_MS) return 'Not pinged: the cache may have lapsed, and a ping would pay to rebuild it.'
+    if (c.isCold || (await $.clock.now()) - c.lastAt >= LATE_MS) return 'Not pinged: the cache may have lapsed, and a ping would pay to rebuild it.'
+    if ((await read($, ttl)) < TTL_MS) return 'Not pinged: this session\'s cache lives 5 minutes, too short to keep warm.'
+    if (guard.isPinging) return 'A ping is already out.' // no await between this check and ping's claim
     const served = await ping($, guard)
-    return served === null ? 'The ping missed the cache, so keep-warm is off.' : `Ping read ${Math.round(served / 1000)}k tokens from the cache.`
+    return served === null ? 'The ping did not read the cache, so keep-warm is off.' : `Ping read ${Math.round(served / 1000)}k tokens from the cache.`
   }
   if (arg === 'off' || (arg === '' && w.capMs !== null)) {
     await setCap($, null)
@@ -280,6 +307,8 @@ const measure = async ($: EngineInterface, lastAt: number | null, model: string 
     model: m || c?.model || null,
     hit: c?.hit ?? null,
     costUsd: u.cost?.usd ?? c?.costUsd,
+    // A new request time means a request rebuilt the cache; otherwise a switched model's stays cold.
+    isCold: lastAt !== null && lastAt !== c?.lastAt ? undefined : c?.isCold,
   }))
 }
 
@@ -298,7 +327,8 @@ export const register: Register = (on, options) => {
       try {
         // In this order: a ping at 50 minutes idle lands before a warning due in the same tick.
         await pingIfDue($, guard, inTurn)
-        if (!inTurn) await warnIfDue($, warnMin)
+        // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
+        if (!inTurn && !guard.isPinging) await warnIfDue($, warnMin)
       } catch {
         // The next tick tries again.
       }
@@ -330,7 +360,12 @@ export const register: Register = (on, options) => {
   on('session.compact', { trigger: 'precompute' }, async ($, e, next) => {
     const w = await read($, warm)
     const now = await $.clock.now()
-    if (e.agentId || w.capMs === null || now - w.lastPromptAt >= w.capMs) return next(e)
+    const c = await read($, cache)
+    // Only a cache keep-warm can still hold is worth the full context: the same test as the ribbon's
+    // ember readout, so not a switched model's, a 5-minute one, or one past the last possible ping.
+    const holds = c !== null && canHold(c, await read($, ttl)) &&
+      emberLeftMs({ now, lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy: false }) > 0
+    if (e.agentId || !holds) return next(e)
     await recordSkip($, now)
     return { skip: 'keep-warm is holding this session' }
   })
@@ -407,10 +442,24 @@ export const register: Register = (on, options) => {
       const window = (await $.session.usage()).context.window
       const model = typeof e.model === 'string' ? e.model : await $.session.model()
       const tokens = typeof e.context_tokens === 'number' ? e.context_tokens : 0
-      await update($, cache, () => ({ lastAt, tokens, window, model }))
+      // The engine knows the real TTL; inside the hour this means a 5-minute cache that lapsed.
+      const isCold = e.prompt_cache_likely_expired === true ? true : undefined
+      await update($, cache, () => ({ lastAt, tokens, window, model, isCold }))
     }
     return r
   }).catch(($, e, next) => next(e)) // a band that fails to seed never holds up the session
+
+  // A model switch reports how long this session's cache lives. A new model starts its own
+  // cache, so the old one stops counting and nothing pings it until the next reply; a resume
+  // restores the model the cache was built on, so it stays as it was.
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    const r = await next(e)
+    await update($, ttl, () => (e.cache_ttl === '5m' ? 5 * 60_000 : TTL_MS))
+    if (e.source !== 'resume' && e.from_model !== e.to_model) {
+      await update($, cache, c => (c ? { ...c, model: e.to_model, isCold: true } : c))
+    }
+    return r
+  }).catch(($, e, next) => next(e)) // a band that fails to note a switch never holds it up
 
   // The cache's hour runs from a request's start, but only a request that got a
   // response touched it, so the start time lands once the usage has come back.
@@ -514,7 +563,8 @@ export const register: Register = (on, options) => {
     const list = await read($, windows)
     const now = await $.clock.now()
     const facts = await read($, cache)
-    const view = viewOf(facts, now)
+    const ttlMs = await read($, ttl)
+    const view = viewOf(facts, now, ttlMs)
     const columns = e.props.bodyColumns ?? e.viewport?.columns ?? 100
 
     const crew = await read($, agents)
@@ -640,8 +690,8 @@ export const register: Register = (on, options) => {
     const mode = view.mode
     const cold = mode === 'cold'
     const hue = HUE[mode]
-    const mine = mineModel(view)
-    const minsLeft = Math.max(0, TTL_MIN - view.idleMin)
+    const myCost = nextCost(view.model, mode, view.tokens, view.ttlMin)
+    const minsLeft = Math.max(0, view.ttlMin - view.idleMin)
     const hitValue = cold ? null : (facts?.hit ?? null)
     const hitLabel = hitValue === null ? null : `${hitValue}% hit`
     const isHitLow = hitValue !== null && hitValue < HIT_LOW_AT
@@ -650,8 +700,12 @@ export const register: Register = (on, options) => {
     const { capMs, lastPromptAt } = await read($, warm)
     // While Ember holds, each ping restarts the cache hour, so that countdown never
     // reaches zero: show how long Ember has left. Past the cap, the hour is true again.
-    const emberLeftMs = !cold && capMs !== null ? capMs - (now - lastPromptAt) : 0
-    const ember = emberLeftMs > 0 ? `ember ${fmtIdle(emberLeftMs)}` : null
+    // Only while a ping can still come: not mid-turn, not too late, not a cache it cannot hold.
+    const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn }
+    const emberMs = !cold && facts && canHold(facts, ttlMs) ? emberLeftMs(hold) : 0
+    const ember = emberMs > 0 ? `ember ${fmtIdle(emberMs)}` : null
+    const emberView: EmberView | null =
+      ember && capMs !== null ? { left: fmtIdle(emberMs), spent: 1 - emberMs / capMs, coldAt: fmtClock(coldAtMs(hold)) } : null
     const capValue = capMs === null ? 'off' : `${capMs / HOUR_MS}h`
     const picks = WARM_PICKS.includes(capValue) ? WARM_PICKS : [...WARM_PICKS, capValue]
     const warmButton = (
@@ -670,7 +724,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
     // The tokens always show; only what is left after them is spare.
-    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? EMBER_CELLS : 0)
+    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0)
     const showHit = kind !== 'wide' || spare >= HIT_CELLS
     const composition = await read($, mix)
     const showMini = kind === 'wide' && spare >= HIT_CELLS + MINI_CELLS
@@ -696,8 +750,8 @@ export const register: Register = (on, options) => {
     const summary = cold
       ? [
           <Text key="idle" color={hue} bold>{` ${view.idle}`}</Text>,
-          mine ? <Text key="dot" color={MUTED}> · </Text> : null,
-          mine ? <Text key="cost" color={TEXT} bold>{usd(costOf(mine, mode, view.tokens))}</Text> : null,
+          myCost !== null ? <Text key="dot" color={MUTED}> · </Text> : null,
+          myCost !== null ? <Text key="cost" color={TEXT} bold>{usd(myCost)}</Text> : null,
         ]
       : [
           ember
@@ -754,9 +808,9 @@ export const register: Register = (on, options) => {
             <Box key="block" flexDirection="column" flexShrink={0} marginRight={2}>
               <Box flexDirection="row" alignItems="center">{badge}</Box>
               <Text color={hue} bold>{cold ? `${view.idle} idle` : (ember ?? `${minsLeft}m`)}</Text>
-              {mine ? (
+              {myCost !== null ? (
                 <Box flexDirection="row">
-                  <Text color={TEXT} bold>{usd(costOf(mine, mode, view.tokens))}</Text>
+                  <Text color={TEXT} bold>{usd(myCost)}</Text>
                   <Text color={MUTED}> next</Text>
                 </Box>
               ) : null}
@@ -790,7 +844,7 @@ export const register: Register = (on, options) => {
 
     let card = null
     if (open && Svg) {
-      const c = cardSvg(view)
+      const c = cardSvg(view, emberView)
       const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>

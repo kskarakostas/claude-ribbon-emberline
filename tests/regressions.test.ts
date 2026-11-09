@@ -559,7 +559,7 @@ test('a long category name is cut before it reaches the figures', async () => {
 })
 
 test('one minute left reads as one minute', async () => {
-  const card = cardSvg({ mode: 'warm', idle: '59m', idleMin: 59, tokens: 1000, window: 1_000_000, mine: 'opus' })
+  const card = cardSvg({ mode: 'warm', idle: '59m', idleMin: 59, tokens: 1000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 })
   expect(card.alt).toContain('in 1 minute.')
 })
 

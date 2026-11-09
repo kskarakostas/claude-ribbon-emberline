@@ -2,6 +2,7 @@
 // hands to Svg. Nothing here touches the engine.
 
 import { SANS } from './font'
+import { ratesOf } from './prices'
 
 export type Mode = 'warm' | 'cold'
 export type Kind = 'wide' | 'stacked' | 'tight'
@@ -22,7 +23,7 @@ export const HUE: Record<Mode, string> = { warm: '#7fb09a', cold: '#6aaabd' }
 export const INK = '#1c1a16'
 export const WORD: Record<Mode, string> = { warm: 'WARM', cold: 'COLD' }
 
-/** The prompt cache lives an hour after the last request that read or wrote it. */
+/** The prompt cache lives an hour after the last request that read or wrote it, unless the engine reports 5 minutes. */
 export const TTL_MIN = 60
 export const TTL_MS = TTL_MIN * 60 * 1000
 
@@ -33,26 +34,32 @@ export const TIGHT_AT = 42
 
 export const kindOf = (columns: number): Kind => (columns >= WIDE_AT ? 'wide' : columns >= TIGHT_AT ? 'stacked' : 'tight')
 
-// $ per million tokens: input, and the cache read. The 1-hour cache write is 2 times
-// input. Haiku 5.5 is $0.10 up to 100K tokens and $0.50 above; long sessions use the
-// higher rate.
-export type Model = { id: string; NAME: string; input: number; read: number }
+// The card's columns: each family priced at its current model. The session's own column
+// uses its exact model, so an older version shows its own price.
+export type Model = { id: string; NAME: string; ref: string }
 export const MODELS: Model[] = [
-  { id: 'fable', NAME: 'FABLE', input: 10, read: 0.25 },
-  { id: 'opus', NAME: 'OPUS', input: 4, read: 0.2 },
-  { id: 'sonnet', NAME: 'SONNET', input: 2, read: 0.2 },
-  { id: 'haiku', NAME: 'HAIKU', input: 0.5, read: 0.05 },
+  { id: 'fable', NAME: 'FABLE', ref: 'claude-fable-5-1' },
+  { id: 'opus', NAME: 'OPUS', ref: 'claude-opus-5-5' },
+  { id: 'sonnet', NAME: 'SONNET', ref: 'claude-sonnet-5-5' },
+  { id: 'haiku', NAME: 'HAIKU', ref: 'claude-haiku-5-5' },
 ]
 
 /** Which row of MODELS a model id belongs to, or null for one the card doesn't price. */
 export const familyOf = (model: string | null | undefined): string | null => {
-  const m = (model ?? '').toLowerCase()
+  const m = (model ?? '').toLowerCase().replace('mythos', 'fable')
   return MODELS.find(x => m.includes(x.id))?.id ?? null
 }
 
-export const coldCost = (m: Model, tokens: number): number => (tokens / 1e6) * m.input * 2
-export const warmCost = (m: Model, tokens: number): number => (tokens / 1e6) * m.read
-export const costOf = (m: Model, mode: Mode, tokens: number): number => (mode === 'cold' ? coldCost(m, tokens) : warmCost(m, tokens))
+/** A 5-minute cache write bills 1.25 times input; the 1-hour write is the table's own rate. */
+const SHORT_WRITE = 1.25
+
+/** What the next message costs: a cold one writes the context at the cache's rate, a warm one reads it. Null for an unpriced model. */
+export const nextCost = (model: string | null, mode: Mode, tokens: number, ttlMin = TTL_MIN): number | null => {
+  const r = model ? ratesOf(model, tokens) : null
+  if (!r) return null
+  const write = ttlMin < TTL_MIN ? r[0] * SHORT_WRITE : r[3]
+  return (tokens / 1e6) * (mode === 'cold' ? write : r[2])
+}
 export const usd = (n: number): string => '$' + n.toFixed(2)
 export const tok = (n: number): string => (n >= 1e6 ? `${Number((n / 1e6).toFixed(1))}M` : `${Math.round(n / 1000)}k`)
 
@@ -78,9 +85,20 @@ export type CacheView = {
   window: number
   /** This session's MODELS id, or null when the model isn't priced. */
   mine: string | null
+  /** This session's model id, for its exact price. */
+  model: string | null
+  /** How long the cache lives, in minutes: 60, or 5 when the engine says so. */
+  ttlMin: number
 }
 
-export const mineModel = (v: CacheView): Model | undefined => MODELS.find(m => m.id === v.mine)
+/** Keep-warm on the card: its time left, the share of the cap spent, and the clock time the cache goes cold. */
+export type EmberView = { left: string; spent: number; coldAt: string }
+
+/** A clock time in the machine's own zone: 14:40. */
+export const fmtClock = (ms: number): string => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 // ---------- SVG helpers ----------
 export const svgDoc = (w: number, h: number, body: string, font: boolean): string =>
@@ -216,11 +234,12 @@ export const roboSvg = (mode: Mode): string => svgDoc(ROBO_SIZE, ROBO_SIZE, robo
 const CARD_W = 720
 const CARD_H = 60
 
-export const cardSvg = (v: CacheView): { source: string; w: number; h: number; alt: string } => {
+export const cardSvg = (v: CacheView, ember: EmberView | null = null): { source: string; w: number; h: number; alt: string } => {
   const { mode } = v
   const cold = mode === 'cold'
   const hue = HUE[mode]
-  const left = Math.max(0, TTL_MIN - v.idleMin)
+  const left = Math.max(0, v.ttlMin - v.idleMin)
+  const held = !cold && ember !== null
   const t = (x: number, y: number, str: string, size: number, weight: number, fill: string, anchor = 'start', ls = 0) =>
     `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" letter-spacing="${ls}" text-anchor="${anchor}">${str}</text>`
   const vline = (x: number) => `<rect x="${x}" y="8" width="1" height="${CARD_H - 14}" fill="${LINE}"/>`
@@ -228,10 +247,12 @@ export const cardSvg = (v: CacheView): { source: string; w: number; h: number; a
   // State and time left.
   const chip = chipShapes(0, 8, WORD[mode], hue, 11, 1)
   let g = chip.svg + t(chip.w + 10, 23, v.idle, 18, 600, TEXT)
-  g += t(208, 23, cold ? 'cold now' : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
+  g += t(208, 23, cold ? 'cold now' : held ? `ember ${ember.left}` : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
   const full = 208
-  const spent = cold ? full : full * Math.min(1, v.idleMin / TTL_MIN)
+  // Held, the bar is the share of keep-warm spent; otherwise the share of the cache's life.
+  const spent = cold ? full : full * Math.min(1, held ? ember.spent : v.idleMin / v.ttlMin)
   g += `<rect x="0" y="40" width="${full}" height="3" rx="1.5" fill="${EMPTY}"/><rect x="0" y="40" width="${spent}" height="3" rx="1.5" fill="${hue}"/>`
+  if (held) g += t(0, 56, `cold about ${ember.coldAt}`, 10, 500, MUTED)
   g += vline(224)
 
   // The conversation's size.
@@ -245,12 +266,16 @@ export const cardSvg = (v: CacheView): { source: string; w: number; h: number; a
   MODELS.forEach((m, i) => {
     const x = 392 + i * 82
     const mine = m.id === v.mine
-    g += t(x, 36, usd(costOf(m, mode, v.tokens)), 14, mine ? 700 : 500, mine ? TEXT : MUTED)
+    // Every ref is in the price table, and a family match means the session's model is too.
+    const cost = nextCost(mine ? v.model : m.ref, mode, v.tokens, v.ttlMin) ?? nextCost(m.ref, mode, v.tokens, v.ttlMin) ?? 0
+    g += t(x, 36, usd(cost), 14, mine ? 700 : 500, mine ? TEXT : MUTED)
     g += t(x, 50, m.NAME, 10, 700, mine ? hue : MUTED, 'start', 0.6)
   })
 
   const alt = cold
     ? `Cache cold. Idle ${v.idle}. Next message re-caches ${tok(v.tokens)} tokens.`
-    : `Cache warm. Goes cold in ${left} minute${left === 1 ? '' : 's'}. ${tok(v.tokens)} tokens cached.`
+    : held
+      ? `Cache warm. Ember holds it for ${ember.left} more, then it goes cold about ${ember.coldAt}. ${tok(v.tokens)} tokens cached.`
+      : `Cache warm. Goes cold in ${left} minute${left === 1 ? '' : 's'}. ${tok(v.tokens)} tokens cached.`
   return { source: svgDoc(CARD_W, CARD_H, g, true), w: CARD_W, h: CARD_H, alt }
 }

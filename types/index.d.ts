@@ -15,6 +15,8 @@ export type CacheFacts = {
   hit?: number | null
   /** What the session has cost so far, as /cost totals it, when the host keeps a ledger. */
   costUsd?: number
+  /** True when the cache stopped counting before its hour: a model switch, or a resume the engine says outlived it. The next request clears it. */
+  isCold?: boolean
 }
 
 /** Whether the cache card is open, remembered only for the state it was set in. */
@@ -71,6 +73,7 @@ declare module 'claude-code' {
       mix: ContextMix | null
       warnedFor: number
       warm: Warm
+      ttl: number
     }
   }
 }

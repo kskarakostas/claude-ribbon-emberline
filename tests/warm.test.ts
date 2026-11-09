@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { capFrom, HOUR_MS, shouldPing } from '../hooks/warm'
+import { capFrom, coldAtMs, emberLeftMs, HOUR_MS, shouldPing } from '../hooks/warm'
 import type { PingRecord } from '../types'
 
 const NOW = Date.parse('2098-12-31T22:00:00Z')
@@ -42,13 +42,14 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD) => {
   })
   on('ui.toast', () => ({ value: undefined }) as never)
   on('ui.invalidate', () => ({ value: undefined }) as never)
-  on('model.fork', (_, e) => {
+  on('model.fork', async (_, e) => {
     asked.push(e.prompt)
-    return { value: fork() } as never
+    return { value: await fork() } as never
   })
   on('session.compact', (_, e) => ({ messages: e.messages }) as never)
   on('prompt.submit', (_, e) => ({ text: e.text }) as never)
   on('classic.SessionStart', () => ({}) as never)
+  on('classic.PostModelSwitch', () => ({}) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('turn.step', async function* () {
@@ -67,6 +68,9 @@ const reply = async ($: Engine) => {
 const command = ($: Engine, args: string) =>
   ($.command.run as (e: unknown) => Promise<{ text?: string }>)({ command: 'keep-warm', args, origin: { kind: 'plugin', name: 'test' } })
 const band = ($: Engine) => $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
+/** A cold cache opens its card, so the state is read from the drawings' words, folded or not. */
+const isColdOn = async (ui: Awaited<ReturnType<typeof band>>) =>
+  (await ui.findAll({ type: 'Svg' })).some(s => s.props.alt === 'COLD' || String(s.props.alt).startsWith('Cache cold'))
 
 test('keep-warm is off by default and never calls the model', async ($, on) => {
   const { clock, asked } = await start($, on)
@@ -112,6 +116,222 @@ test('while Ember holds, the band counts down Ember, then hands back to the cach
   expect(await after.find({ type: 'Text', text: /^ ember/ })).toBeUndefined()
   expect(await after.find({ type: 'Text', text: /^ \d+m$/ })).toBeDefined()
   await after.unmount()
+})
+
+test('while a turn holds the pings back, the band shows the cache hour, not Ember', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  // A turn left open, as at an unanswered permission prompt: no ping can come.
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 'open', text: 'hi' })
+  await clock.advance(55 * MIN)
+
+  const ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /^ ember/ })).toBeUndefined()
+  expect(await ui.find({ text: ' 5m' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('too late for a ping, the band shows the cache hour, not Ember', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await clock.advance(59 * MIN)
+  await command($, '2h')
+
+  const ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /^ ember/ })).toBeUndefined()
+  expect(await ui.find({ text: ' 1m' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the open card counts down Ember and says when the cache will go cold', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  await clock.advance(70 * MIN)
+
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  const card = JSON.stringify(await ui.find({ key: 'card' }))
+  // Pings at 50 and 100 minutes; the one at 150 is past the cap, so cold at 160.
+  const at = new Date(NOW + 160 * MIN)
+  const clockText = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  expect(card).toContain(`Ember holds it for 50m more, then it goes cold about ${clockText}`)
+  expect(card).not.toContain('Goes cold in')
+  await ui.unmount()
+})
+
+test('no expiry warning while a ping is still in flight', async ($, on) => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  const { clock, asked, sent } = await start($, on, () => gate.then(GOOD))
+  await reply($)
+  await command($, '2h')
+
+  await clock.advance(50 * MIN)
+  expect(asked.length).toBe(1)
+  await clock.advance(90_000) // three more ticks with the fork pending
+  expect(sent).toEqual([])
+  release()
+})
+
+test('a ping that never answers stops keep-warm and frees the next ping', async ($, on) => {
+  let forks = 0
+  const { clock, asked, sent } = await start($, on, () => (forks++ === 0 ? new Promise(() => {}) : GOOD()))
+  await reply($)
+  await command($, '2h')
+
+  await clock.advance(50 * MIN)
+  expect(asked.length).toBe(1)
+  await clock.advance(4 * MIN)
+  expect(sent.some(t => t.includes('Keep-warm stopped'))).toBe(true)
+  const ui = await band($)
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('off')
+  await ui.unmount()
+  // The hung fork no longer holds the guard: a manual ping runs and answers.
+  const r = await command($, 'ping')
+  expect(r.text).toContain('Ping read')
+})
+
+test('a reply during a ping keeps its own, later cache time', async ($, on) => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  const { clock, asked } = await start($, on, () => gate.then(GOOD))
+  await reply($)
+  await command($, '2h')
+  await clock.advance(50 * MIN)
+  expect(asked.length).toBe(1)
+
+  await clock.advance(MIN)
+  await reply($) // 51 minutes: the person is back while the ping is out
+  release()
+  await clock.advance(49 * MIN + 30_000) // 49.5 minutes after the reply: no ping yet
+  expect(asked.length).toBe(1)
+  await clock.advance(MIN)
+  expect(asked.length).toBe(2)
+})
+
+test('a /model switch marks the cache cold and holds the pings until the next reply', async ($, on) => {
+  const { clock, asked } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: 'claude-sonnet-5-5', requested_model: 'sonnet', source: 'command',
+    context_tokens: TOKENS, prompt_cache_warm: true, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
+
+  const ui = await band($)
+  expect(await isColdOn(ui)).toBe(true)
+  await ui.unmount()
+  await clock.advance(55 * MIN)
+  expect(asked).toEqual([])
+
+  await reply($) // the new model's cache now exists
+  await clock.advance(51 * MIN)
+  expect(asked.length).toBe(1)
+})
+
+test('a resume that restores the same model leaves the cache warm', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: MODEL, requested_model: null, source: 'resume',
+    context_tokens: TOKENS, prompt_cache_warm: true, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
+  const ui = await band($)
+  expect(await isColdOn(ui)).toBe(false)
+  await ui.unmount()
+})
+
+test('a 5-minute cache goes cold at 5 minutes, and keep-warm never pings it', async ($, on) => {
+  const { clock, asked } = await start($, on)
+  await reply($)
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: MODEL, requested_model: null, source: 'resume',
+    context_tokens: TOKENS, prompt_cache_warm: true, cache_ttl: '5m', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
+  await command($, '2h')
+
+  const early = await band($)
+  expect(await early.find({ type: 'Text', text: /^ ember/ })).toBeUndefined()
+  await early.unmount()
+  await clock.advance(6 * MIN)
+  const ui = await band($)
+  expect(await isColdOn(ui)).toBe(true)
+  await ui.unmount()
+  await clock.advance(55 * MIN)
+  expect(asked).toEqual([])
+})
+
+const SWITCH = { requested_model: null, context_tokens: TOKENS, prompt_cache_warm: true, estimated_cache_write_usd: 1.2, pricing: 'catalog' }
+const modelSwitch = ($: Engine, e: Record<string, unknown>) =>
+  ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({ ...SWITCH, from_model: MODEL, to_model: MODEL, source: 'command', cache_ttl: '1h', ...e })
+
+test('after a /model switch keep-warm no longer skips the idle compaction', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await command($, '2h')
+  await modelSwitch($, { to_model: 'claude-sonnet-5-5' })
+  expect((await compact($, 'precompute')).skip).toBeUndefined()
+})
+
+test('once no ping can come, keep-warm no longer skips the idle compaction', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  // A turn left open past 58 minutes: no ping came, and none can now.
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 'open', text: 'hi' })
+  await clock.advance(60 * MIN)
+  expect((await compact($, 'precompute')).skip).toBeUndefined()
+})
+
+test('two pings asked at once fork once', async ($, on) => {
+  const { asked } = await start($, on)
+  await reply($)
+  await Promise.all([command($, 'ping'), command($, 'ping')])
+  expect(asked.length).toBe(1)
+})
+
+test('a resume onto another model leaves the cache as it was', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await modelSwitch($, { from_model: 'claude-sonnet-5-5', to_model: MODEL, source: 'resume' })
+  const ui = await band($)
+  expect(await isColdOn(ui)).toBe(false)
+  await ui.unmount()
+})
+
+test('a cache a /model switch made cold gets no expiry warning and no manual ping', async ($, on) => {
+  const { clock, asked, sent } = await start($, on)
+  await reply($)
+  await modelSwitch($, { to_model: 'claude-sonnet-5-5' })
+  await clock.advance(51 * MIN)
+  expect(sent).toEqual([])
+  const r = await command($, 'ping')
+  expect(r.text).toContain('Not pinged')
+  expect(asked).toEqual([])
+})
+
+test('a later switch to a 1-hour cache restores the hour', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await modelSwitch($, { source: 'resume', cache_ttl: '5m' })
+  await modelSwitch($, { source: 'resume', cache_ttl: '1h' })
+  await clock.advance(10 * MIN)
+  const ui = await band($)
+  expect(await isColdOn(ui)).toBe(false)
+  await ui.unmount()
+})
+
+test('a 5-minute cache gets no expiry warning after every reply', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: MODEL, requested_model: null, source: 'resume',
+    context_tokens: TOKENS, prompt_cache_warm: true, cache_ttl: '5m', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
+  await reply($)
+  await clock.advance(MIN)
+  expect(sent).toEqual([])
 })
 
 test('the cap stops the pings and lets the cache go cold', async ($, on) => {
@@ -365,6 +585,22 @@ test('ping timing: never when off, busy, or past the cap', async () => {
   expect(shouldPing({ ...BASE, capMs: null })).toBe(false)
   expect(shouldPing({ ...BASE, isBusy: true })).toBe(false)
   expect(shouldPing({ ...BASE, lastPromptAt: -120 * MIN })).toBe(false)
+})
+
+test('ember time: what is left of the cap while a ping can still come', async () => {
+  expect(emberLeftMs({ ...BASE, lastPromptAt: -30 * MIN })).toBe(90 * MIN)
+  expect(emberLeftMs({ ...BASE, capMs: null })).toBe(0)
+  expect(emberLeftMs({ ...BASE, isBusy: true })).toBe(0)
+  expect(emberLeftMs({ ...BASE, lastAt: -58 * MIN })).toBe(0)
+  expect(emberLeftMs({ ...BASE, lastPromptAt: -120 * MIN })).toBe(0)
+})
+
+test('cold time: an hour after the last ping the cap allows', async () => {
+  const at0 = { now: 0, lastAt: 0, lastPromptAt: 0, capMs: 2 * HOUR_MS, isBusy: false }
+  expect(coldAtMs(at0)).toBe(160 * MIN)
+  expect(coldAtMs({ ...at0, capMs: HOUR_MS })).toBe(110 * MIN)
+  expect(coldAtMs({ ...at0, capMs: null })).toBe(60 * MIN)
+  expect(coldAtMs({ ...at0, isBusy: true })).toBe(60 * MIN)
 })
 
 test('a skipped ping still gets the expiry warning', async ($, on) => {
