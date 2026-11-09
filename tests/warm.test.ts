@@ -111,7 +111,7 @@ const isColdOn = async (ui: Awaited<ReturnType<typeof band>>) =>
 test('keep-warm is off by default and never calls the model', async ($, on) => {
   const { clock, asked } = await start($, on)
   await reply($)
-  await clock.advance(180 * MIN)
+  await clock.advance(120 * MIN) // past the 50-minute ping time and the hour the cache lives
   expect(asked).toEqual([])
 })
 

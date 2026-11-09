@@ -22,8 +22,6 @@ export type CacheFacts = {
 /** Whether the cache card is open, remembered only for the state it was set in. */
 export type Fold = { mode: 'warm' | 'cold'; open: boolean }
 
-/** Each usage window's share used at one moment, by kind, for the pace forecast. */
-export type PaceSample = { at: number; used: Record<string, number> }
 
 /** One step of the app's task list. */
 export type PlanStep = { content: string; status: 'pending' | 'in_progress' | 'completed' }
@@ -88,7 +86,6 @@ declare module 'claude-code' {
       seenFor: number
       autoOff: boolean
       hits: number[]
-      pace: PaceSample[]
     }
   }
 }

@@ -6,8 +6,8 @@ import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
-import { runOutAt, withSample } from './pace'
-import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceSample, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
+import { runOutAt } from './pace'
+import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
   cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usd,
@@ -34,8 +34,6 @@ const TIGHT_CELLS = 6
 const TICK_MS = 30_000
 
 const windows = atom({ plugin: 'emberline', key: 'windows' } as const, [] as Window[])
-/** Recent usage readings, for the pace forecast. */
-const pace = atom({ plugin: 'emberline', key: 'pace' } as const, [] as PaceSample[])
 const cache = atom({ plugin: 'emberline', key: 'cache' } as const, null as CacheFacts | null)
 const fold = atom({ plugin: 'emberline', key: 'fold' } as const, null as Fold | null)
 
@@ -529,12 +527,10 @@ const recordSkip = async ($: EngineInterface, at: number): Promise<void> => {
   }
 }
 
-/** The usage windows as last reported, and a reading for the pace forecast. */
+/** The usage windows as last reported. */
 const noteWindows = async ($: EngineInterface, list: readonly Window[]): Promise<void> => {
   const cleaned = clean(list)
-  const now = await $.clock.now()
   await update($, windows, () => cleaned)
-  await update($, pace, samples => withSample(samples, now, cleaned))
 }
 
 const pull = async ($: EngineInterface): Promise<void> => {
@@ -820,7 +816,6 @@ export const register: Register = (on, options) => {
     // The mobile app draws no picker, so it keeps the on and off button.
     const Select = e.surface !== 'mobile' && 'Select' in ui ? ui.Select : null
     const list = await read($, windows)
-    const samples = await read($, pace)
     const now = await $.clock.now()
     const facts = await read($, cache)
     const ttlMs = await read($, ttl)
@@ -889,10 +884,10 @@ export const register: Register = (on, options) => {
     }
 
 
-    // When a window runs out at this session's pace, only if that comes before it resets.
+    // When a window runs out at its pace since it reset, only if that comes before it resets.
     const outOf = (w: Window): string | null => {
       const resetsAt = w.resetsAt ? Date.parse(w.resetsAt) : NaN
-      const at = runOutAt(samples, w.kind, now, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt)
+      const at = runOutAt(w.kind, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt, now)
       return at === null ? null : fmtIdle(at - now)
     }
     const forecasts = list.filter(w => outOf(w) !== null).length
