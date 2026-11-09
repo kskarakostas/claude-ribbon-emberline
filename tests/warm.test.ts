@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { capFrom, coldAtMs, emberLeftMs, HOUR_MS, shouldPing } from '../hooks/warm'
+import { capFrom, coldAtMs, emberLeftMs, HOUR_MS, shouldPing, untilFrom } from '../hooks/warm'
 import type { PingRecord } from '../types'
 
 const NOW = Date.parse('2098-12-31T22:00:00Z')
@@ -21,14 +21,14 @@ const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 29
 type Fork = () => unknown
 const GOOD: Fork = () => ({ isAnswered: true, text: 'ok', usage: USAGE })
 
-const start = async ($: Engine, on: On, fork: Fork = GOOD) => {
+const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW) => {
   const saved: Record<string, unknown> = {}
   on('store.get', (_, e) => ({ value: saved[e.key] }) as never)
   on('store.set', (_, e) => {
     saved[e.key] = e.value
     return { value: undefined } as never
   })
-  const clock = mock.clock(on, { now: NOW })
+  const clock = mock.clock(on, { now })
   const asked: string[] = []
   const sent: string[] = []
   const toasts: string[] = []
@@ -332,6 +332,100 @@ const hhmm = (ms: number) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+test('until holds to a clock time, and a new prompt does not move it', async ($, on) => {
+  const { clock, asked } = await start($, on)
+  await reply($)
+  const r = await command($, `until ${hhmm(NOW + 90 * MIN)}`)
+  expect(r.text).toBe(`Keep-warm on until ${hhmm(NOW + 90 * MIN)}, this session only.`)
+  await clock.advance(51 * MIN)
+  expect(asked.length).toBe(1)
+  await clock.advance(9 * MIN)
+  await reply($) // at 60 minutes: a 1h cap would now run to 120, until stays at 90
+  await clock.advance(55 * MIN)
+  expect(asked.length).toBe(1)
+  // Past its time, until switches keep-warm off rather than showing a stale clock.
+  const ui = await band($)
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('off')
+  await ui.unmount()
+})
+
+test('a ping falling due as the until time arrives does not fire', async ($, on) => {
+  const { clock, asked } = await start($, on)
+  await command($, `until ${hhmm(NOW + 95 * MIN)}`)
+  await clock.advance(45 * MIN)
+  await reply($) // the next ping would fall due at 95 minutes, the until time itself
+  await clock.advance(50 * MIN)
+  expect(asked).toEqual([])
+})
+
+test('an until time ends on time even while a turn runs', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, `until ${hhmm(NOW + 90 * MIN)}`)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 'open', text: 'hi' })
+  await clock.advance(91 * MIN)
+  const ui = await band($)
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('off')
+  await ui.unmount()
+})
+
+test('the picker lists each until time once, across a clock change', async ($, on) => {
+  // 01:30 in Athens two hours before the 2027 fall-back: 03:00 comes twice. Other zones pass trivially.
+  await start($, on, GOOD, Date.parse('2027-10-30T22:30:00Z'))
+  await reply($)
+  const ui = await band($)
+  const values = ((await ui.find({ key: 'warm-pick' }))?.props.options as { value: string }[]).map(o => o.value)
+  expect(new Set(values).size).toBe(values.length)
+  await ui.unmount()
+})
+
+test('until refuses a time it cannot reach within 12 hours', async ($, on) => {
+  await start($, on)
+  await reply($)
+  expect((await command($, `until ${hhmm(NOW - 60 * MIN)}`)).text).toContain('Usage')
+  expect((await command($, 'until 25:00')).text).toContain('Usage')
+})
+
+test('the picker offers the next three full hours at least an hour away', async ($, on) => {
+  await start($, on)
+  await reply($)
+  const first = new Date(NOW + 60 * MIN)
+  if (first.getMinutes() || first.getSeconds() || first.getMilliseconds()) first.setMinutes(60, 0, 0)
+  const untils = [0, 1, 2].map(i => `until ${hhmm(first.getTime() + i * 60 * MIN)}`)
+  const ui = await band($)
+  const options = (await ui.find({ key: 'warm-pick' }))?.props.options as { value: string; label: string }[]
+  expect(options.map(o => o.value)).toEqual(['off', '1h', '2h', '6h', '12h', ...untils, 'ping', 'status'])
+  expect(options.find(o => o.value === untils[0])?.label).toBe(`Until ${untils[0].slice(6)}`)
+  await ui.select({ key: 'warm-pick', value: untils[1] })
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe(untils[1])
+  await ui.unmount()
+})
+
+test('/keep-warm status says what keep-warm and the cache are doing', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  expect((await command($, 'status')).text).toBe(`Keep-warm off. Cache warm, 300k tokens, cold about ${hhmm(NOW + 60 * MIN)}.`)
+
+  await command($, '2h')
+  await clock.advance(51 * MIN) // one ping, at 50 minutes
+  const each = (299_000 * 0.2 + 10 * 4 + 20 * 20 + 50 * 8) / 1e6
+  const want = `Keep-warm on (2h), 1h 9m left. Cache warm, 300k tokens, cold about ${hhmm(NOW + 160 * MIN)}. ` +
+    `1 ping, $${each.toFixed(2)} spent, last ${hhmm(NOW + 50 * MIN)} read 299k.`
+  expect((await command($, 'status')).text).toBe(want)
+})
+
+test('Status in the picker shows the same words and keeps the time picked', async ($, on) => {
+  const { toasts } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  const said = (await command($, 'status')).text
+  const ui = await band($)
+  await ui.select({ key: 'warm-pick', value: 'status' })
+  expect(toasts).toContain(said)
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('2h')
+  await ui.unmount()
+})
+
 test('Ping now in the picker pings, says what the cache served, and keeps the time picked', async ($, on) => {
   const { asked, toasts } = await start($, on)
   await reply($)
@@ -563,7 +657,9 @@ test('the band picker sets the time and switches it off', async ($, on) => {
   const pick = await ui.find({ key: 'warm-pick' })
   expect(pick?.props.label).toBe('Ember')
   expect(pick?.props.value).toBe('off')
-  expect((pick?.props.options as { value: string }[]).map(o => o.value)).toEqual(['off', '1h', '2h', '6h', '12h', 'ping'])
+  const values = (pick?.props.options as { value: string }[]).map(o => o.value)
+  expect(values.slice(0, 5)).toEqual(['off', '1h', '2h', '6h', '12h'])
+  expect(values.slice(-2)).toEqual(['ping', 'status'])
 
   await ui.select({ key: 'warm-pick', value: '12h' })
   expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('12h')
@@ -687,6 +783,23 @@ test('ping timing: never when off, busy, or past the cap', async () => {
   expect(shouldPing({ ...BASE, capMs: null })).toBe(false)
   expect(shouldPing({ ...BASE, isBusy: true })).toBe(false)
   expect(shouldPing({ ...BASE, lastPromptAt: -120 * MIN })).toBe(false)
+})
+
+test('until times: the next such clock time within 12 hours, or nothing', async () => {
+  expect(untilFrom(`until ${hhmm(NOW + 150 * MIN)}`, NOW)).toBe(NOW + 150 * MIN)
+  expect(untilFrom(`until ${hhmm(NOW - 60 * MIN)}`, NOW)).toBeNull() // tomorrow is 23 hours away
+  const lateEvening = new Date(NOW)
+  lateEvening.setHours(23, 0, 0, 0) // from 23:00, 01:00 is tomorrow, two hours on
+  expect(untilFrom(`until ${hhmm(lateEvening.getTime() + 120 * MIN)}`, lateEvening.getTime())).toBe(lateEvening.getTime() + 120 * MIN)
+  expect(untilFrom('until 25:00', NOW)).toBeNull()
+  expect(untilFrom('until 9', NOW)).toBeNull()
+  expect(untilFrom('2h', NOW)).toBeNull()
+})
+
+test('ping timing: an until time ends the window whatever the last prompt', async () => {
+  expect(shouldPing({ ...BASE, untilAt: 10 * MIN })).toBe(true)
+  expect(shouldPing({ ...BASE, lastPromptAt: 0, untilAt: 0 })).toBe(false)
+  expect(emberLeftMs({ ...BASE, untilAt: 10 * MIN })).toBe(10 * MIN)
 })
 
 test('ember time: what is left of the cap while a ping can still come', async () => {

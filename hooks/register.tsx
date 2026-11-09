@@ -5,7 +5,7 @@ import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
-import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, shouldPing } from './warm'
+import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, shouldPing, untilChoices, untilFrom } from './warm'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
@@ -62,10 +62,13 @@ const PING_LOG_MAX = 50
 const COMPACT_SKIPS = 'compactSkips'
 /** How often a running turn recounts what fills the context. */
 const MIX_REFRESH_MS = 30_000
-const WARM_USAGE = 'Usage: /keep-warm [1h to 12h | off | ping]. Alone it switches 2h on or off.'
+const WARM_USAGE = 'Usage: /keep-warm [1h to 12h | until HH:MM | off | ping | status]. Alone it switches 2h on or off.'
 const WARM_PICKS = ['off', '1h', '2h', '6h', '12h']
-/** The picker entry that pings now instead of setting a time. */
+/** The picker entries that ping now, or say where things stand, instead of setting a time. */
 const PING_PICK = 'ping'
+const STATUS_PICK = 'status'
+/** How many until entries the picker offers. */
+const UNTIL_PICKS = 3
 /** A timer's ping and a command's cannot overlap. Lost on reload, which ends any ping. */
 type PingGuard = { isPinging: boolean }
 
@@ -166,8 +169,17 @@ const warnIfDue = async ($: EngineInterface, warnMin: number | null): Promise<vo
 
 const setCap = async ($: EngineInterface, capMs: number | null): Promise<void> => {
   const now = await $.clock.now()
-  await update($, warm, () => ({ capMs, lastPromptAt: now }))
+  await update($, warm, () => ({ capMs, lastPromptAt: now, untilAt: null }))
 }
+
+/** Holds to a clock time; capMs is the span from now, so the readout's bar has a whole to measure against. */
+const setUntil = async ($: EngineInterface, untilAt: number): Promise<void> => {
+  const now = await $.clock.now()
+  await update($, warm, () => ({ capMs: untilAt - now, lastPromptAt: now, untilAt }))
+}
+
+/** The window's name: `2h`, or `until 18:30`. */
+const windowLabel = (w: Warm): string => (w.untilAt ? `until ${fmtClock(w.untilAt)}` : `${(w.capMs ?? 0) / HOUR_MS}h`)
 
 /** Keeps the last pings on disk: a fork leaves no row in the transcript, so this is the only trace of one. */
 const recordPing = async ($: EngineInterface, record: PingRecord): Promise<void> => {
@@ -239,7 +251,7 @@ const pingIfDue = async ($: EngineInterface, guard: PingGuard, isBusy: boolean):
   const c = await read($, cache)
   if (!c || guard.isPinging || !canHold(c, await read($, ttl))) return
   const w = await read($, warm)
-  const isDue = shouldPing({ now: await $.clock.now(), lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy })
+  const isDue = shouldPing({ now: await $.clock.now(), lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy, untilAt: w.untilAt })
   // Checked again with no await before ping claims it, so a ping started meanwhile wins.
   if (isDue && !guard.isPinging) await ping($, guard)
 }
@@ -256,10 +268,38 @@ const pingNow = async ($: EngineInterface, guard: PingGuard, isBusy: boolean): P
   return served === null ? 'The ping did not read the cache, so keep-warm is off.' : `Ping read ${Math.round(served / 1000)}k tokens from the cache.`
 }
 
+/** Where keep-warm and the cache stand, in the words the command and the picker both give. */
+const statusText = async ($: EngineInterface, isBusy: boolean): Promise<string> => {
+  const w = await read($, warm)
+  const c = await read($, cache)
+  const tally = await read($, ledger)
+  if (!c || c.lastAt <= 0) return `Keep-warm ${w.capMs === null ? 'off' : `on (${windowLabel(w)})`}. No cache yet.`
+  const now = await $.clock.now()
+  const ttlMs = await read($, ttl)
+  const hold = { now, lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy, untilAt: w.untilAt }
+  const left = canHold(c, ttlMs) ? emberLeftMs(hold) : 0
+  const ember =
+    w.capMs === null ? 'Keep-warm off.' : left > 0 ? `Keep-warm on (${windowLabel(w)}), ${fmtIdle(left)} left.` : `Keep-warm on (${windowLabel(w)}), not pinging now.`
+  const cold = c.isCold || now - c.lastAt >= ttlMs
+  const coldAt = left > 0 ? coldAtMs(hold) : c.lastAt + ttlMs
+  const cacheText = cold ? 'Cache cold.' : `Cache warm, ${tok(c.tokens)} tokens, cold about ${fmtClock(coldAt)}.`
+  const tallyText = tally
+    ? ` ${tally.count} ping${tally.count === 1 ? '' : 's'}, ${tally.isFloor ? 'at least ' : ''}${usd(tally.costUsd)} spent, last ${fmtClock(tally.lastAt)} read ${tok(tally.lastServed)}.`
+    : ''
+  return `${ember} ${cacheText}${tallyText}`
+}
+
 const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard, isBusy: boolean): Promise<string> => {
   const arg = args.trim()
   const w = await read($, warm)
   if (arg === 'ping') return pingNow($, guard, isBusy)
+  if (arg === 'status') return statusText($, isBusy)
+  if (arg.startsWith('until')) {
+    const untilAt = untilFrom(arg, await $.clock.now())
+    if (untilAt === null) return WARM_USAGE
+    await setUntil($, untilAt)
+    return `Keep-warm on until ${fmtClock(untilAt)}, this session only.`
+  }
   if (arg === 'off' || (arg === '' && w.capMs !== null)) {
     await setCap($, null)
     return 'Keep-warm off.'
@@ -272,10 +312,24 @@ const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard, i
 
 /** `off` is no cap: `capFrom` answers null for it. `ping` pings now and leaves the time as it was. */
 const pickWarm = async ($: EngineInterface, value: string, guard: PingGuard, isBusy: boolean): Promise<void> => {
-  if (value === PING_PICK) {
-    $.ui.toast(await pingNow($, guard, isBusy))
-    $.ui.invalidate('ui.render') // a refused ping changes nothing, so redraw to put the picked time back
-  } else await setCap($, capFrom(value))
+  if (value === PING_PICK || value === STATUS_PICK) {
+    $.ui.toast(value === PING_PICK ? await pingNow($, guard, isBusy) : await statusText($, isBusy))
+    $.ui.invalidate('ui.render') // neither changes the time, so redraw to put the picked one back
+    return
+  }
+  if (value.startsWith('until ')) {
+    const untilAt = untilFrom(value, await $.clock.now())
+    if (untilAt === null) $.ui.toast('Not set: that time is more than 12 hours away.')
+    else await setUntil($, untilAt)
+    return
+  }
+  await setCap($, capFrom(value))
+}
+
+/** A clock time does not come round again on the next prompt, as a cap does: once passed, keep-warm switches off. */
+const expireUntil = async ($: EngineInterface): Promise<void> => {
+  const w = await read($, warm)
+  if (w.capMs !== null && w.untilAt && (await $.clock.now()) >= w.untilAt) await setCap($, null)
 }
 
 /** Tells the person once when keep-warm's window runs out while the cache is still warm, and when it goes cold. */
@@ -285,7 +339,7 @@ const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<voi
   // The same opt-out and size floor as the expiry warning.
   if (w.capMs === null || !c || warnMin === null || c.tokens < WARN_TOKENS) return
   const now = await $.clock.now()
-  const end = w.lastPromptAt + w.capMs
+  const end = w.untilAt ?? w.lastPromptAt + w.capMs
   if (now < end || (await read($, endedFor)) === end) return
   await update($, endedFor, () => end)
   const ttlMs = await read($, ttl)
@@ -377,13 +431,15 @@ export const register: Register = (on, options) => {
         // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
         if (!inTurn && !guard.isPinging) await warnIfDue($, warnMin)
         if (!inTurn && !guard.isPinging) await endIfDue($, warnMin)
+        // After the notice had its chance, and whatever the turn or settings: an until time ends on time.
+        await expireUntil($)
       } catch {
         // The next tick tries again.
       }
     })
     await pull($).catch(() => null)
     await $.command.register({ name: 'agents-panel', description: 'Show or hide the subagents panel' }).catch(() => null)
-    await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, off, or ping' }).catch(() => null)
+    await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
     return next(e)
   })
 
@@ -412,7 +468,7 @@ export const register: Register = (on, options) => {
     // Only a cache keep-warm can still hold is worth the full context: the same test as the ribbon's
     // ember readout, so not a switched model's, a 5-minute one, or one past the last possible ping.
     const holds = c !== null && canHold(c, await read($, ttl)) &&
-      emberLeftMs({ now, lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy: false }) > 0
+      emberLeftMs({ now, lastAt: c.lastAt, lastPromptAt: w.lastPromptAt, capMs: w.capMs, isBusy: false, untilAt: w.untilAt }) > 0
     if (e.agentId || !holds) return next(e)
     await recordSkip($, now)
     return { skip: 'keep-warm is holding this session' }
@@ -754,17 +810,20 @@ export const register: Register = (on, options) => {
     const isHitLow = hitValue !== null && hitValue < HIT_LOW_AT
     const fillLabel = view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
     // shortcut: these widths are estimates in cells; measure them if a wide row still overflows.
-    const { capMs, lastPromptAt } = await read($, warm)
+    const held = await read($, warm)
+    const { capMs, lastPromptAt, untilAt } = held
     // While Ember holds, each ping restarts the cache hour, so that countdown never
     // reaches zero: show how long Ember has left. Past the cap, the hour is true again.
     // Only while a ping can still come: not mid-turn, not too late, not a cache it cannot hold.
-    const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn }
+    const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn, untilAt }
     const emberMs = !cold && facts && canHold(facts, ttlMs) ? emberLeftMs(hold) : 0
     const ember = emberMs > 0 ? `ember ${fmtIdle(emberMs)}` : null
     const emberView: EmberView | null =
       ember && capMs !== null ? { left: fmtIdle(emberMs), spent: 1 - emberMs / capMs, coldAt: fmtClock(coldAtMs(hold)) } : null
-    const capValue = capMs === null ? 'off' : `${capMs / HOUR_MS}h`
-    const picks = WARM_PICKS.includes(capValue) ? WARM_PICKS : [...WARM_PICKS, capValue]
+    const capValue = capMs === null ? 'off' : windowLabel(held)
+    const offered = [...new Set([...WARM_PICKS, ...untilChoices(now, UNTIL_PICKS).map(t => `until ${fmtClock(t)}`)])]
+    const picks = offered.includes(capValue) ? offered : [...offered, capValue]
+    const pickLabel = (value: string) => (value === 'off' ? 'Off' : value.startsWith('until ') ? `Until ${value.slice(6)}` : value)
     const warmButton = (
       <Box key="warm" flexShrink={0} marginRight={1}>
         {Select ? (
@@ -772,11 +831,15 @@ export const register: Register = (on, options) => {
             key="warm-pick"
             label="Ember"
             value={capValue}
-            options={[...picks.map(value => ({ value, label: value === 'off' ? 'Off' : value })), { value: PING_PICK, label: 'Ping now' }]}
+            options={[
+              ...picks.map(value => ({ value, label: pickLabel(value) })),
+              { value: PING_PICK, label: 'Ping now' },
+              { value: STATUS_PICK, label: 'Status' },
+            ]}
             onSelect={value => pickWarm($, value, guard, inTurn)}
           />
         ) : (
-          <Button key="warm-toggle" label={capMs === null ? 'Ember' : `Ember ${capMs / HOUR_MS}h`} onPress={() => toggleWarm($)} />
+          <Button key="warm-toggle" label={capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`} onPress={() => toggleWarm($)} />
         )}
       </Box>
     )

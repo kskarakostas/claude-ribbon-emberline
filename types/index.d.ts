@@ -55,7 +55,7 @@ export type AgentRun = {
  * Keep-warm for this session: the idle cap (null is off) and the time of the last
  * prompt, or of switching it on.
  */
-export type Warm = { capMs: number | null; lastPromptAt: number }
+export type Warm = { capMs: number | null; lastPromptAt: number; untilAt?: number | null }
 
 /** One ping as `$.store` keeps it under `pingLog`: what the cache served of the context it expected. */
 export type PingRecord = { at: number; served: number; tokens: number; isServed: boolean }
