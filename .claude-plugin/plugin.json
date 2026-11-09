@@ -1,6 +1,6 @@
 {
   "name": "emberline",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A live ribbon above the prompt: usage left, context tokens and mix, cache warm or cold, plan progress, running agents and background work, plus optional keep-warm pings that hold the prompt cache while you are away.",
   "author": {
     "name": "K. S. Karakostas"

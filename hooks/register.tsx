@@ -5,8 +5,9 @@ import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
-import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, shouldPing, untilChoices, untilFrom } from './warm'
-import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
+import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
+import { runOutAt, withSample } from './pace'
+import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceSample, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
   cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, kindOf, nextCost, roboSvg, usd,
@@ -33,6 +34,8 @@ const TIGHT_CELLS = 6
 const TICK_MS = 30_000
 
 const windows = atom({ plugin: 'emberline', key: 'windows' } as const, [] as Window[])
+/** Recent usage readings, for the pace forecast. */
+const pace = atom({ plugin: 'emberline', key: 'pace' } as const, [] as PaceSample[])
 const cache = atom({ plugin: 'emberline', key: 'cache' } as const, null as CacheFacts | null)
 const fold = atom({ plugin: 'emberline', key: 'fold' } as const, null as Fold | null)
 
@@ -91,6 +94,8 @@ const HIT_CELLS = 11
 const FILL_CELLS = 14
 const COST_CELLS = 10
 const MINI_CELLS = 9
+/** What ` · out in ~13h 20m` spends after a window, when its forecast shows. */
+const PACE_CELLS = 19
 /** The cells of the ` 42m` countdown that Ember's text replaces. */
 const COUNTDOWN_CELLS = 4
 
@@ -162,7 +167,15 @@ const warnIfDue = async ($: EngineInterface, warnMin: number | null): Promise<vo
   if (leftMs <= 0 || leftMs > warnMin * 60_000 || (await read($, warnedFor)) === c.lastAt) return
   await update($, warnedFor, () => c.lastAt)
   const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
-  const text = `${project}: ${Math.round(c.tokens / 1000)}k tokens go cold in ${Math.ceil(leftMs / 60_000)}m`
+  let text = `${project}: ${Math.round(c.tokens / 1000)}k tokens go cold in ${Math.ceil(leftMs / 60_000)}m`
+  // With keep-warm off, weigh the re-cache against what 2h of pings from here would cost.
+  const recache = nextCost(c.model, 'cold', c.tokens, ttlMs / 60_000)
+  const perPing = nextCost(c.model, 'warm', c.tokens)
+  const now = await $.clock.now()
+  const pings = pingCount({ now, lastAt: c.lastAt, lastPromptAt: now, capMs: DEFAULT_CAP_MS, isBusy: false })
+  if ((await read($, warm)).capMs === null && recache !== null && perPing !== null && pings > 0) {
+    text += `. Re-cache ${usd(recache)}; Ember 2h would keep it warm for about ${usd(pings * perPing)}.`
+  }
   const sent = await $.ui.notify(text, { title: 'Cache expiring' }).catch(() => null)
   if (!sent?.isSent) $.ui.toast(text)
 }
@@ -392,9 +405,17 @@ const recordSkip = async ($: EngineInterface, at: number): Promise<void> => {
   }
 }
 
+/** The usage windows as last reported, and a reading for the pace forecast. */
+const noteWindows = async ($: EngineInterface, list: readonly Window[]): Promise<void> => {
+  const cleaned = clean(list)
+  const now = await $.clock.now()
+  await update($, windows, () => cleaned)
+  await update($, pace, samples => withSample(samples, now, cleaned))
+}
+
 const pull = async ($: EngineInterface): Promise<void> => {
   const u = await $.session.usage()
-  await update($, windows, () => clean(u.rateLimits))
+  await noteWindows($, u.rateLimits)
 }
 
 /** Fresh context figures from the engine onto the cache facts, when it has them. */
@@ -523,7 +544,7 @@ export const register: Register = (on, options) => {
 
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
-      await update($, windows, () => clean(e.rateLimits))
+      await noteWindows($, e.rateLimits)
     }
     if (e.changed.includes('context') && e.context.tokens && e.context.tokens > 0) {
       const tokens = e.context.tokens
@@ -668,6 +689,7 @@ export const register: Register = (on, options) => {
     // The mobile app draws no picker, so it keeps the on and off button.
     const Select = e.surface !== 'mobile' && 'Select' in ui ? ui.Select : null
     const list = await read($, windows)
+    const samples = await read($, pace)
     const now = await $.clock.now()
     const facts = await read($, cache)
     const ttlMs = await read($, ttl)
@@ -735,7 +757,19 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const kind = kindOf(columns)
+
+    // When a window runs out at this session's pace, only if that comes before it resets.
+    const outOf = (w: Window): string | null => {
+      const resetsAt = w.resetsAt ? Date.parse(w.resetsAt) : NaN
+      const at = runOutAt(samples, w.kind, now, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt)
+      return at === null ? null : fmtIdle(at - now)
+    }
+    const forecasts = list.filter(w => outOf(w) !== null).length
+    // Forecasts widen the row: where one shows and the row would pass the band, the cache stacks instead.
+    // shortcut: the cell estimates run conservative, so this stacks somewhat early; measure if it bites.
+    const wideNeeds =
+      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? AGENTS_CELLS : 0) + forecasts * PACE_CELLS
+    const kind = kindOf(columns) === 'wide' && view && forecasts > 0 && wideNeeds > columns ? 'stacked' : kindOf(columns)
     const isWide = kind === 'wide'
     const cells = kind === 'tight' ? TIGHT_CELLS : CELLS
 
@@ -747,6 +781,7 @@ export const register: Register = (on, options) => {
         col: left < LOW_AT ? WARN : ACCENT,
         name: NAMES[w.kind] ?? w.kind.toUpperCase(),
         reset: fmtReset(w.resetsAt, now),
+        out: outOf(w),
       }
     }
 
@@ -761,6 +796,7 @@ export const register: Register = (on, options) => {
           <Text color={p.col} bold> {p.left}% left</Text>
           {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
           {p.reset ? <Text color={MUTED}> · {p.reset}</Text> : null}
+          {p.out ? <Text color={WARN}>{` · out in ~${p.out}`}</Text> : null}
         </Box>
       )
     }
@@ -778,6 +814,7 @@ export const register: Register = (on, options) => {
             {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
           </Box>
           {p.reset ? <Text color={MUTED}>resets {p.reset}</Text> : null}
+          {p.out ? <Text color={WARN}>{`out in ~${p.out}`}</Text> : null}
         </Box>
       )
     }
@@ -844,7 +881,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
     // The tokens always show; only what is left after them is spare.
-    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0)
+    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
     const showHit = kind !== 'wide' || spare >= HIT_CELLS
     const composition = await read($, mix)
     const showMini = kind === 'wide' && spare >= HIT_CELLS + MINI_CELLS

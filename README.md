@@ -9,7 +9,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 ## What it shows
 
 **The ribbon**
-- Each usage limit as a tick bar that fills as you use it, beside what's left and when it resets.
+- Each usage limit as a tick bar that fills as you use it, beside what's left and when it resets. When the pace of the last hour would use a limit up before it resets, an amber `out in ~2h 30m` says when.
 - Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
 - Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead (`ember 1h 50m`).
 - The session's running cost at list price, when the row has room.
@@ -27,7 +27,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 
 **On request**
 - An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost.
-- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off, set with `claude plugin configure emberline`.
+- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off, set with `claude plugin configure emberline`. With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
 
 ## Keep-warm
 

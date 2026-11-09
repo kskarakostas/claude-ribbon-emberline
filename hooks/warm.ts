@@ -71,6 +71,15 @@ export const emberLeftMs = (f: PingFacts): number => {
   return Math.max(0, windowEnd(f) - f.now)
 }
 
+/** How many pings keep-warm would send in its window, if nothing else touches the cache. */
+export const pingCount = (f: PingFacts): number => {
+  if (f.now - f.lastAt >= LATE_MS) return 0 // too late for the first, as shouldPing says
+  const end = windowEnd(f)
+  let n = 0
+  for (let last = f.lastAt; last + PING_MS < end; last += PING_MS) n++
+  return n
+}
+
 /**
  * When the cache goes cold if only pings touch it: an hour after the last ping the cap
  * still allows. Pings land a tick late, so this is about, not exact.

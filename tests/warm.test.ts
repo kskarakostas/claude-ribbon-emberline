@@ -519,6 +519,32 @@ test('switching Ember off is not Ember running out', async ($, on) => {
   expect(sent.filter(t => t.includes('Ember ended'))).toEqual([])
 })
 
+test('with keep-warm off, the expiry warning weighs a re-cache against keeping it warm', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await clock.advance(50 * MIN)
+  // Opus 5.5 at 300k: a 1-hour write at $8 per million; Ember 2h from here pings 3 times at $0.20 per million.
+  expect(sent).toEqual(['demo: 300k tokens go cold in 10m. Re-cache $2.40; Ember 2h would keep it warm for about $0.18.'])
+})
+
+test('too late for a ping, the expiry warning makes no offer', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  // Back after 58.5 idle minutes: keep-warm could no longer ping in time.
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
+  await clock.advance(30_000)
+  const warning = sent.find(t => t.includes('go cold in'))
+  expect(warning).toBe('demo: 300k tokens go cold in 1m')
+})
+
+test('with keep-warm on but its time used up, the expiry warning makes no offer', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '1h') // one ping at 50 minutes; the next would be past the hour
+  await clock.advance(101 * MIN)
+  const warning = sent.find(t => t.includes('go cold in 10m'))
+  expect(warning).toBe('demo: 300k tokens go cold in 10m')
+})
+
 test('a 5-minute cache gets no expiry warning after every reply', async ($, on) => {
   const { clock, sent } = await start($, on)
   await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
