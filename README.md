@@ -27,14 +27,14 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
 
 **On request**
-- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
+- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` before any has run) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
 
-Set options with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
+Set options with `Warn` and `Auto` behind `ⓘ`, with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
 
 ## Keep-warm
 
-Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`. The picker also offers `Until` the next three full hours at least an hour away, and `/keep-warm until 18:30` takes any clock time within 12 hours: keep-warm holds to that time whatever you do in between, then switches off within the next half minute. `Ping now` in the same picker pings at once and shows what the cache served; `Status`, or `/keep-warm status`, says what keep-warm and the cache are doing. The mobile app has no picker, only an on and off button for 2h.
+Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`. The picker also offers `Until` the next three full hours at least an hour away, and `Custom…`, which asks for any length or time the command takes. `/keep-warm until 18:30` takes any clock time within 12 hours: keep-warm holds to that time whatever you do in between, then switches off within the next half minute. `Ping now` in the same picker pings at once and shows what the cache served; `Status`, or `/keep-warm status`, says what keep-warm and the cache are doing. The mobile app has no picker: its row has an on and off button for 2h, and behind `ⓘ` a button steps through the lengths, beside `Ping now`, `Status` and the settings.
 
 - 50 minutes after the last request, one small side request reads the cached conversation and resets the hour. No automatic ping runs while a turn is open, for example at a permission prompt.
 - It leaves no row in your conversation.

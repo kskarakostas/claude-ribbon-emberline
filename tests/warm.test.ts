@@ -35,8 +35,32 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW, sl
   const sent: string[] = []
   const toasts: string[] = []
   /** The auto keep-warm setting, as the /config menu holds it now. */
-  const settings = { autoKeepWarm: 'off' }
-  on('config.list', () => ({ value: [{ key: 'emberline.autoKeepWarm', label: 'Auto keep-warm', kind: 'choice', value: settings.autoKeepWarm, options: ['off', '1h', '2h', '6h', '12h'], provider: { kind: 'plugin', name: 'emberline' }, isLocked: false }] }) as never)
+  const settings: Record<string, string> = { autoKeepWarm: 'off', warnMinutes: '10' }
+  const row = (field: string, options: string[]) => ({ key: `emberline.${field}`, label: field, kind: 'choice', value: settings[field], options, provider: { kind: 'plugin', name: 'emberline' }, isLocked: false })
+  on('config.list', () => ({ value: [row('warnMinutes', ['off', '5', '10']), row('autoKeepWarm', ['off', '1h', '2h', '6h', '12h'])] }) as never)
+  /** What `$.config.set` was asked, and a refusal to give, as a managed setting would. */
+  const configSets: { key: string; value: unknown }[] = []
+  const refuse = { reason: '' }
+  on('config.set', (_, e) => {
+    configSets.push({ key: e.key, value: e.value })
+    if (refuse.reason) return { deny: refuse.reason } as never
+    settings[e.key.replace('emberline.', '')] = String(e.value)
+    return { value: e.value } as never
+  })
+  /** The answer the ask dialog gives, or null for a dismissed dialog. */
+  const dialog = { answer: '3h' as string | null, asked: [] as string[] }
+  on('tool.call', (_, e) => {
+    const questions = ((e as unknown as { questions?: { question: string }[] }).questions ?? [])
+    dialog.asked.push(...questions.map(q => q.question))
+    if (dialog.answer === null) return { deny: 'dismissed' } as never
+    return { result: { questions, answers: Object.fromEntries(questions.map(q => [q.question, dialog.answer])) } } as never
+  })
+  const opened: string[] = []
+  on('ui.panes', () => ({ value: [] }) as never)
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } } as never
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'x' } }))
   on('session.cwd', () => ({ value: '/home/k/demo' }) as never)
@@ -65,7 +89,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW, sl
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: MODEL, ...USAGE } } as never
   })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/home/k/demo' })
-  return { clock, asked, sent, saved, toasts, settings, span }
+  return { clock, asked, sent, saved, toasts, settings, span, configSets, refuse, dialog, opened }
 }
 const reply = async ($: Engine) => {
   await ($.prompt.submit as (e: unknown) => Promise<unknown>)({ text: 'hi' })
@@ -399,7 +423,7 @@ test('the picker offers the next three full hours at least an hour away', async 
   const untils = [0, 1, 2].map(i => `until ${hhmm(first.getTime() + i * 60 * MIN)}`)
   const ui = await band($)
   const options = (await ui.find({ key: 'warm-pick' }))?.props.options as { value: string; label: string }[]
-  expect(options.map(o => o.value)).toEqual(['off', '1h', '2h', '6h', '12h', ...untils, 'ping', 'status'])
+  expect(options.map(o => o.value)).toEqual(['off', '1h', '2h', '6h', '12h', ...untils, 'custom', 'ping', 'status'])
   expect(options.find(o => o.value === untils[0])?.label).toBe(`Until ${untils[0].slice(6)}`)
   await ui.select({ key: 'warm-pick', value: untils[1] })
   expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe(untils[1])
@@ -1214,4 +1238,96 @@ test('a late wake during a turn that ends with no request is still told once the
   await ($.turn.complete as (e: unknown) => Promise<unknown>)({ reason: 'error', answer: '', durationMs: 1000, isAborted: true, turnId: 't' })
   await clock.advance(MIN)
   expect(sent.filter(t => t.includes('missed'))).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens went cold at ${clockAt(NOW + HOUR_MS)}`])
+})
+
+const at = (ms: number) => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+/** The card opens on a cold cache, so the expanded view's controls show. */
+const openCard = async ($: Engine, clock: { advance(ms: number): Promise<void> }, surface = 'desktop') => {
+  await reply($)
+  await clock.advance(61 * MIN)
+  return $.ui.mount({ plugin: 'emberline', surface, component: 'AbovePrompt', props: PROPS } as never)
+}
+
+test('Custom… in the Ember picker asks for any length or clock time the command takes', async ($, on) => {
+  const { dialog, toasts } = await start($, on)
+  await reply($)
+  const ui = await band($)
+  const pick = (await ui.find({ key: 'warm-pick' }))?.props.options as { value: string; label: string }[]
+  expect(pick).toContainEqual({ value: 'custom', label: 'Custom…' })
+  dialog.answer = '3h'
+  await ui.select({ key: 'warm-pick', value: 'custom' })
+  expect(dialog.asked.length).toBe(1)
+  expect((await command($, 'status')).text).toContain('Keep-warm on (3h)')
+  const later = at(NOW + 150 * MIN)
+  dialog.answer = later // a bare clock time means until
+  await ui.select({ key: 'warm-pick', value: 'custom' })
+  expect((await command($, 'status')).text).toContain(`Keep-warm on (until ${later})`)
+  dialog.answer = 'soon'
+  await ui.select({ key: 'warm-pick', value: 'custom' })
+  expect(toasts.some(t => t.startsWith('Not set:'))).toBe(true)
+  expect((await command($, 'status')).text).toContain(`Keep-warm on (until ${later})`)
+  dialog.answer = null // dismissed: nothing changes
+  await ui.select({ key: 'warm-pick', value: 'custom' })
+  expect((await command($, 'status')).text).toContain(`Keep-warm on (until ${later})`)
+  await ui.unmount()
+})
+
+test('the expanded view sets the warning and auto keep-warm, and the warning follows it at once', async ($, on) => {
+  const { clock, configSets, sent } = await start($, on)
+  const ui = await openCard($, clock)
+  const warn = await ui.find({ key: 'set-warn' })
+  expect(warn?.props.value).toBe('10')
+  expect((warn?.props.options as { value: string }[]).map(o => o.value)).toEqual(['off', '5', '10'])
+  expect((await ui.find({ key: 'set-auto' }))?.props.value).toBe('off')
+  await ui.select({ key: 'set-warn', value: 'off' })
+  await ui.select({ key: 'set-auto', value: '2h' })
+  await ui.unmount()
+  expect(configSets).toEqual([{ key: 'emberline.warnMinutes', value: 'off' }, { key: 'emberline.autoKeepWarm', value: '2h' }])
+  await command($, 'off') // switched off by hand: auto stays out, so the warning is the only thing left to fire
+  const before = sent.length // the card opened on a cold cache, after the 10-minute warning had fired
+  await reply($)
+  await clock.advance(52 * MIN)
+  expect(sent.slice(before).filter(t => t.includes('go cold in'))).toEqual([])
+})
+
+test('a setting the organization holds is refused with its reason', async ($, on) => {
+  const { clock, refuse, toasts, settings } = await start($, on)
+  refuse.reason = 'managed by your organization'
+  const ui = await openCard($, clock)
+  await ui.select({ key: 'set-auto', value: '2h' })
+  await ui.unmount()
+  expect(toasts).toContain('Not changed: managed by your organization')
+  expect(settings.autoKeepWarm).toBe('off')
+})
+
+test('on mobile the expanded view steps through the lengths and gives Ping now, Status and the settings', async ($, on) => {
+  const { clock, toasts, configSets } = await start($, on)
+  const ui = await openCard($, clock, 'mobile')
+  expect((await ui.find({ key: 'm-ember' }))?.props.label).toBe('Ember off ▸')
+  await ui.press({ key: 'm-ember' })
+  expect((await ui.find({ key: 'm-ember' }))?.props.label).toBe('Ember 1h ▸')
+  await ui.press({ key: 'm-ember' })
+  expect((await command($, 'status')).text).toContain('Keep-warm on (2h)')
+  await ui.press({ key: 'm-status' })
+  expect(toasts.some(t => t.startsWith('Keep-warm on (2h)'))).toBe(true)
+  await ui.press({ key: 'm-ping' })
+  expect(toasts.some(t => t.startsWith('Not pinged'))).toBe(true) // the cache went cold before the card opened
+  await ui.press({ key: 'set-warn' }) // a button steps the value where there is no picker
+  await ui.press({ key: 'set-auto' })
+  expect(configSets).toEqual([{ key: 'emberline.warnMinutes', value: 'off' }, { key: 'emberline.autoKeepWarm', value: '1h' }])
+  for (let i = 0; i < 4; i++) await ui.press({ key: 'm-ember' }) // 6h, 12h, then round to off
+  expect((await ui.find({ key: 'm-ember' }))?.props.label).toBe('Ember 1h ▸')
+  await ui.unmount()
+})
+
+test('the expanded view opens the Agents panel before any subagent has run', async ($, on) => {
+  const { clock, opened } = await start($, on)
+  const ui = await openCard($, clock)
+  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
+  await ui.press({ key: 'agents-open' })
+  expect(opened).toEqual(['emberline-agents'])
+  await ui.unmount()
 })

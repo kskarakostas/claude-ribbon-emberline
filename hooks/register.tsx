@@ -76,6 +76,10 @@ const WARM_PICKS = ['off', '1h', '2h', '6h', '12h']
 /** The picker entries that ping now, or say where things stand, instead of setting a time. */
 const PING_PICK = 'ping'
 const STATUS_PICK = 'status'
+/** The picker entry that asks for any length or clock time the command takes. */
+const CUSTOM_PICK = 'custom'
+/** The warning setting's values, as plugin.json declares them. */
+const WARN_PICKS = ['off', '5', '10']
 /** How many until entries the picker offers. */
 const UNTIL_PICKS = 3
 /** A timer's ping and a command's cannot overlap. Lost on reload, which ends any ping. */
@@ -88,8 +92,7 @@ const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 /** Below this a cold start is cheap, so no notification. PROPOSED, tune from use. */
 const WARN_TOKENS = 100_000
 const DEFAULT_WARN_MIN = 10
-/** The auto keep-warm setting's row in the /config menu. */
-const AUTO_KEY = 'emberline.autoKeepWarm'
+
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
 // window; the Agents button; then what the two optional readings need.
 const ROW_CELLS = 26
@@ -197,12 +200,44 @@ const switchOff = async ($: EngineInterface): Promise<void> => {
   await update($, autoOff, () => true)
 }
 
-/** The auto keep-warm length as the /config menu holds it now, else as the session loaded it; null for off. */
-const autoCapOf = async ($: EngineInterface, loaded: unknown): Promise<number | null> => {
+/** One of this plugin's settings as the /config menu holds it now, else as the session loaded it. */
+const optionOf = async ($: EngineInterface, field: string, loaded: unknown): Promise<unknown> => {
   const rows = await $.config.list().catch(() => null)
-  const row = Array.isArray(rows) ? rows.find(r => r.key === AUTO_KEY) : undefined
-  const value = row ? row.value : loaded
+  const row = Array.isArray(rows) ? rows.find(r => r.key === `emberline.${field}`) : undefined
+  return row ? row.value : loaded
+}
+
+/** The warning lead as the /config menu holds it now, so a change applies without a reload. */
+const warnMinNow = async ($: EngineInterface, loaded: unknown): Promise<number | null> => warnMinutesOf(await optionOf($, 'warnMinutes', loaded))
+
+/** The auto keep-warm length now; null for off. */
+const autoCapOf = async ($: EngineInterface, loaded: unknown): Promise<number | null> => {
+  const value = await optionOf($, 'autoKeepWarm', loaded)
   return typeof value === 'string' ? capFrom(value) : null
+}
+
+/** Saves one setting as the person would in /config; a refusal (a managed value, say) is told. */
+const setOption = async ($: EngineInterface, field: string, value: string): Promise<void> => {
+  const r = await $.config
+    .set({ key: `emberline.${field}`, value })
+    .catch((err: unknown) => ({ deny: err instanceof Error ? err.message : 'the setting could not be saved' }))
+  if (r.deny !== undefined) $.ui.toast(`Not changed: ${r.deny}`)
+  $.ui.invalidate('ui.render')
+}
+
+/** Asks for any length or clock time `/keep-warm` takes: `3h`, `until 18:30`, or a bare `18:30`. */
+const askWarm = async ($: EngineInterface): Promise<void> => {
+  const answer = await $.ui
+    .ask('Keep this session warm for how long, or until when?', { header: 'Ember', options: ['3h', '4h', '8h'] })
+    .catch(() => null) // dismissed: nothing changes
+  if (answer === null) return
+  const text = answer.trim().toLowerCase()
+  const now = await $.clock.now()
+  const capMs = capFrom(text)
+  const untilAt = untilFrom(/^\d{1,2}:\d{2}$/.test(text) ? `until ${text}` : text, now)
+  if (capMs !== null) await setCap($, capMs)
+  else if (untilAt !== null) await setUntil($, untilAt)
+  else $.ui.toast('Not set: give 1h to 12h, or a clock time within 12 hours, like 18:30.')
 }
 
 /** At a turn's end: a large session with keep-warm off, that the person has not switched off, gets the auto length. */
@@ -356,6 +391,11 @@ const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard, i
 
 /** `off` is no cap: `capFrom` answers null for it. `ping` pings now and leaves the time as it was. */
 const pickWarm = async ($: EngineInterface, value: string, guard: PingGuard, isBusy: boolean): Promise<void> => {
+  if (value === CUSTOM_PICK) {
+    await askWarm($)
+    $.ui.invalidate('ui.render') // the picker shows the answer, or the old value back
+    return
+  }
   if (value === PING_PICK || value === STATUS_PICK) {
     $.ui.toast(value === PING_PICK ? await pingNow($, guard, isBusy) : await statusText($, isBusy))
     $.ui.invalidate('ui.render') // neither changes the time, so redraw to put the picked one back
@@ -510,7 +550,6 @@ const measure = async ($: EngineInterface, lastAt: number | null, model: string 
 }
 
 export const register: Register = (on, options) => {
-  const warnMin = warnMinutesOf(options.warnMinutes)
   // The module variable resets on reload, which at worst lets one warning through mid-turn.
   let inTurn = false
   const guard: PingGuard = { isPinging: false }
@@ -522,6 +561,7 @@ export const register: Register = (on, options) => {
     $.clock.every(TICK_MS, async () => {
       $.ui.invalidate('ui.render')
       try {
+        const warnMin = await warnMinNow($, options.warnMinutes)
         // First, so a tick that wakes past a sleep judges the gap before anything moves the cache's time.
         await missedIfDue($, warnMin, () => !inTurn && !guard.isPinging) // read when it decides, not when the tick began
         // In this order: a ping at 50 minutes idle lands before a warning due in the same tick.
@@ -923,6 +963,7 @@ export const register: Register = (on, options) => {
     const cold = mode === 'cold'
     const hue = HUE[mode]
     const myCost = nextCost(view.model, mode, view.tokens, view.ttlMin)
+    const warnMin = await warnMinNow($, options.warnMinutes)
     const minsLeft = Math.max(0, view.ttlMin - view.idleMin)
     const hitValue = cold ? null : (facts?.hit ?? null)
     const hitLabel = hitValue === null ? null : `${hitValue}% hit`
@@ -952,6 +993,7 @@ export const register: Register = (on, options) => {
             value={capValue}
             options={[
               ...picks.map(value => ({ value, label: pickLabel(value) })),
+              { value: CUSTOM_PICK, label: 'Custom…' },
               { value: PING_PICK, label: 'Ping now' },
               { value: STATUS_PICK, label: 'Status' },
             ]}
@@ -1092,10 +1134,41 @@ export const register: Register = (on, options) => {
         : null
       const c = cardSvg(view, emberView, note, await read($, hits))
       const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
+      // What the folded row has no room for: the settings, the panel before any subagent ran, and on
+      // mobile, which draws no picker, the whole Ember menu. A picker where there is one, else a
+      // button that steps to the next value.
+      const choice = (key: string, label: string, value: string, values: readonly string[], name: (v: string) => string, onPick: (v: string) => void) =>
+        Select ? (
+          <Select key={key} label={label} value={value} options={values.map(v => ({ value: v, label: name(v) }))} onSelect={onPick} />
+        ) : (
+          <Button key={key} label={`${label} ${name(value)} ▸`} onPress={() => onPick(values[(values.indexOf(value) + 1) % values.length] ?? values[0]!)} />
+        )
+      const warnSet = String(await optionOf($, 'warnMinutes', options.warnMinutes))
+      const autoSet = String(await optionOf($, 'autoKeepWarm', options.autoKeepWarm))
+      const warnValue = WARN_PICKS.includes(warnSet) ? warnSet : String(DEFAULT_WARN_MIN)
+      const autoValue = WARM_PICKS.includes(autoSet) ? autoSet : 'off'
+      const gap = (key: string) => <Text key={key}>  </Text>
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
           {panel ? <Svg key="context" source={panel.source} alt={panel.alt} /> : null}
           <Svg key="cache-card" source={c.source} alt={c.alt} />
+          <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center">
+            {Select
+              ? null
+              : [
+                  choice('m-ember', 'Ember', capValue, WARM_PICKS, v => v, v => void pickWarm($, v, guard, inTurn)),
+                  gap('g-ember'),
+                  <Button key="m-ping" label="Ping now" onPress={() => pickWarm($, PING_PICK, guard, inTurn)} />,
+                  gap('g-ping'),
+                  <Button key="m-status" label="Status" onPress={() => pickWarm($, STATUS_PICK, guard, inTurn)} />,
+                  gap('g-status'),
+                ]}
+            {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
+            {gap('g-warn')}
+            {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
+            {crew.length === 0 ? gap('g-auto') : null}
+            {crew.length === 0 ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
+          </Box>
         </Box>
       )
     }
