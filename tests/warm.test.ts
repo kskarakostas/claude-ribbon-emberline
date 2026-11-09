@@ -1176,3 +1176,26 @@ test('auto keep-warm leaves a 5-minute cache alone: it cannot be held', async ($
   await reply($)
   expect((await command($, 'status')).text).toContain('Keep-warm off')
 })
+
+test('a missed ping in a window that ends before the cache goes cold makes one notice, not two', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
+  await command($, '1h') // the window ends an hour from here
+  await clock.advance(MIN)
+  await turn($) // the cache goes cold a minute after the window ends
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 59.2 * MIN
+  await clock.advance(62 * MIN)
+  expect(keepWarmNotices(sent)).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens go cold about ${clockAt(NOW + 61 * MIN)}`])
+})
+
+test('no missed-ping notice when a turn is already under way as the timer wakes: its request holds the cache', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 59 * MIN
+  await clock.advance(58.4 * MIN)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 't', text: 'hi' })
+  await clock.advance(2 * MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})

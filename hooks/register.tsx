@@ -404,17 +404,19 @@ const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<voi
  * could go (the timer slept with the computer), while keep-warm was on and holding the cache.
  * A tick inside that window, whatever it did there (pinged, waited on a turn), rules it out.
  */
-const missedIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
+const missedIfDue = async ($: EngineInterface, warnMin: number | null, isQuiet: () => boolean): Promise<void> => {
   const c = await read($, cache)
   const now = await $.clock.now()
   if (!c || c.lastAt <= 0 || now - c.lastAt < PING_MS) return
+  if ((await read($, seenFor)) === c.lastAt) return // claimed already: the common case, with no write
   let isFirst = false
   // One claim per cache cycle, inside the update, so ticks that wake together tell once.
   await update($, seenFor, s => {
     isFirst = s !== c.lastAt
     return c.lastAt
   })
-  if (!isFirst || now - c.lastAt < LATE_MS) return
+  // A turn or a ping in flight is about to touch the cache: the cycle is claimed, nothing to tell.
+  if (!isFirst || now - c.lastAt < LATE_MS || !isQuiet()) return
   const w = await read($, warm)
   const ttlMs = await read($, ttl)
   if (w.capMs === null || warnMin === null || c.tokens < WARN_TOKENS || !canHold(c, ttlMs)) return
@@ -424,9 +426,10 @@ const missedIfDue = async ($: EngineInterface, warnMin: number | null): Promise<
   // A switch-on after the wake needs no test: the first tick after the wake has claimed the cycle.
   if (due >= end) return
   await update($, warnedFor, () => c.lastAt) // this says when it goes cold: no expiry warning on top
-  if (now >= end) await update($, endedFor, () => end) // nor an "Ember ended" for the same window
-  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
   const coldAt = c.lastAt + ttlMs
+  // Nor an "Ember ended" for a window that ends before this cache would go cold anyway.
+  if (end <= coldAt) await update($, endedFor, () => end)
+  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
   const text = `${project}: Ember missed its ping, likely while the computer slept. ${tok(c.tokens)} tokens ${now < coldAt ? 'go cold about' : 'went cold at'} ${fmtClock(coldAt)}`
   const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
   if (!sent?.isSent) $.ui.toast(text)
@@ -518,7 +521,7 @@ export const register: Register = (on, options) => {
       $.ui.invalidate('ui.render')
       try {
         // First, so a tick that wakes past a sleep judges the gap before anything moves the cache's time.
-        await missedIfDue($, warnMin)
+        await missedIfDue($, warnMin, () => !inTurn && !guard.isPinging) // read when it decides, not when the tick began
         // In this order: a ping at 50 minutes idle lands before a warning due in the same tick.
         await pingIfDue($, guard, inTurn)
         // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
