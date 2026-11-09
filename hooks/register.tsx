@@ -10,7 +10,7 @@ import { runOutAt, withSample } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceSample, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
-  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, kindOf, nextCost, roboSvg, usd,
+  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usd,
 } from './cache-art'
 import type { CacheView, EmberView } from './cache-art'
 
@@ -50,6 +50,10 @@ const warnedFor = atom({ plugin: 'emberline', key: 'warnedFor' } as const, 0)
 const endedFor = atom({ plugin: 'emberline', key: 'endedFor' } as const, 0)
 /** The `lastAt` the missed-ping notice last fired for, so each cache cycle tells once. */
 const missedFor = atom({ plugin: 'emberline', key: 'missedFor' } as const, 0)
+/** The person switched keep-warm off in this conversation, so auto keep-warm leaves it off. */
+const autoOff = atom({ plugin: 'emberline', key: 'autoOff' } as const, false)
+/** The cache hit of this conversation's recent requests, for the card's strip. */
+const hits = atom({ plugin: 'emberline', key: 'hits' } as const, [] as number[])
 /** This session's pings, for the card. */
 const ledger = atom({ plugin: 'emberline', key: 'ledger' } as const, null as Ledger | null)
 
@@ -84,8 +88,8 @@ const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 /** Below this a cold start is cheap, so no notification. PROPOSED, tune from use. */
 const WARN_TOKENS = 100_000
 const DEFAULT_WARN_MIN = 10
-/** A hit share under this means the last request rebuilt most of the cache. */
-const HIT_LOW_AT = 50
+/** The auto keep-warm setting's row in the /config menu. */
+const AUTO_KEY = 'emberline.autoKeepWarm'
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
 // window; the Agents button; then what the two optional readings need.
 const ROW_CELLS = 26
@@ -187,6 +191,29 @@ const setCap = async ($: EngineInterface, capMs: number | null): Promise<void> =
   await update($, warm, () => ({ capMs, lastPromptAt: now, untilAt: null }))
 }
 
+/** The person's own off: auto keep-warm then stays out of this conversation. */
+const switchOff = async ($: EngineInterface): Promise<void> => {
+  await setCap($, null)
+  await update($, autoOff, () => true)
+}
+
+/** The auto keep-warm length as the /config menu holds it now, else as the session loaded it; null for off. */
+const autoCapOf = async ($: EngineInterface, loaded: unknown): Promise<number | null> => {
+  const rows = await $.config.list().catch(() => null)
+  const row = Array.isArray(rows) ? rows.find(r => r.key === AUTO_KEY) : undefined
+  const value = row ? row.value : loaded
+  return typeof value === 'string' ? capFrom(value) : null
+}
+
+/** At a turn's end: a large session with keep-warm off, that the person has not switched off, gets the auto length. */
+const autoWarmIfDue = async ($: EngineInterface, loaded: unknown): Promise<void> => {
+  const w = await read($, warm)
+  const c = await read($, cache)
+  if (w.capMs !== null || !c || c.tokens < WARN_TOKENS || (await read($, autoOff))) return
+  const capMs = await autoCapOf($, loaded)
+  if (capMs !== null) await setCap($, capMs)
+}
+
 /** Holds to a clock time; capMs is the span from now, so the readout's bar has a whole to measure against. */
 const setUntil = async ($: EngineInterface, untilAt: number): Promise<void> => {
   const now = await $.clock.now()
@@ -254,6 +281,7 @@ const ping = async ($: EngineInterface, guard: PingGuard): Promise<number | null
     return served
   }
   await update($, warm, w => ({ ...w, capMs: null }))
+  await update($, autoOff, () => true) // a failed ping is not retried by auto keep-warm either
   const text = isTimedOut
     ? `Keep-warm stopped: the ping did not answer in ${PING_TIMEOUT_MS / 60_000} minutes`
     : `Keep-warm stopped: the ping read ${Math.round(served / 1000)}k of ${Math.round(tokens / 1000)}k tokens from the cache`
@@ -316,7 +344,7 @@ const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard, i
     return `Keep-warm on until ${fmtClock(untilAt)}, this session only.`
   }
   if (arg === 'off' || (arg === '' && w.capMs !== null)) {
-    await setCap($, null)
+    await switchOff($)
     return 'Keep-warm off.'
   }
   const capMs = arg === '' ? DEFAULT_CAP_MS : capFrom(arg)
@@ -338,7 +366,9 @@ const pickWarm = async ($: EngineInterface, value: string, guard: PingGuard, isB
     else await setUntil($, untilAt)
     return
   }
-  await setCap($, capFrom(value))
+  const capMs = capFrom(value)
+  if (capMs === null) await switchOff($)
+  else await setCap($, capMs)
 }
 
 /** A clock time does not come round again on the next prompt, as a cap does: once passed, keep-warm switches off. */
@@ -390,7 +420,8 @@ const missedIfDue = async ($: EngineInterface, warnMin: number | null): Promise<
 
 const toggleWarm = async ($: EngineInterface): Promise<void> => {
   const w = await read($, warm)
-  await setCap($, w.capMs === null ? DEFAULT_CAP_MS : null)
+  if (w.capMs === null) await setCap($, DEFAULT_CAP_MS)
+  else await switchOff($)
 }
 
 /** Never throws: a band that cannot note a call must not stop the call. */
@@ -590,6 +621,8 @@ export const register: Register = (on, options) => {
         await update($, warm, w => ({ ...w, capMs: null }))
         await update($, ledger, () => null) // a new conversation starts a new tally
         await update($, agents, () => []) // and has run no subagents
+        await update($, hits, () => [])
+        await update($, autoOff, () => false) // auto keep-warm may switch on again
       }
     } else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
       const now = await $.clock.now()
@@ -638,6 +671,7 @@ export const register: Register = (on, options) => {
     } else {
       const sent = usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
       const hit = sent > 0 ? Math.round((usage.cache_read_input_tokens / sent) * 100) : null
+      if (hit !== null) await update($, hits, h => [...h, hit].slice(-HITS_MAX))
       // The first reply is the first time the size is known, so read the window once here:
       // waiting for a turn to end would keep a new session's ribbon bare through its first turn.
       const held = await read($, cache)
@@ -677,6 +711,7 @@ export const register: Register = (on, options) => {
     // turn.step stamps the exact request time; a turn that answered with no step seen floors at its end.
     const lastAt = e.usage && (!c || now - c.lastAt > e.durationMs) ? now : (c?.lastAt ?? null)
     await measure($, lastAt, e.usage?.model ?? null)
+    await autoWarmIfDue($, options.autoKeepWarm)
     return r
   })
 
@@ -1035,7 +1070,7 @@ export const register: Register = (on, options) => {
           (recache === null ? '' : `, against ${usd(recache)} to re-cache`) +
           `. Last ping ${fmtClock(tally.lastAt)} read ${tok(tally.lastServed)}.`
         : null
-      const c = cardSvg(view, emberView, note)
+      const c = cardSvg(view, emberView, note, await read($, hits))
       const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>

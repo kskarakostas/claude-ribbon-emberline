@@ -717,3 +717,12 @@ test('the card marks its own column as an estimate for a version the price table
   expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('≈$0.06')
   expect(cardSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('≈')
 })
+
+test('the card draws the cache hit of recent requests, a low one in amber, and says it in words', async () => {
+  const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const card = cardSvg(view, null, null, [96, 20, 99])
+  expect(card.alt).toContain('Cache hit over the last 3 requests: lowest 20%, latest 99%.')
+  expect((card.source.match(/class="hit"/g) ?? []).length).toBe(3)
+  expect((card.source.match(/class="hit" [^>]*fill="#d0a85c"/g) ?? []).length).toBe(1)
+  expect(cardSvg(view, null, null, [96]).alt).not.toContain('Cache hit over')
+})

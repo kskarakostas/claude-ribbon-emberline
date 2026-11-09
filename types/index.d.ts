@@ -86,6 +86,8 @@ declare module 'claude-code' {
       ledger: Ledger | null
       endedFor: number
       missedFor: number
+      autoOff: boolean
+      hits: number[]
       pace: PaceSample[]
     }
   }

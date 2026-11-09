@@ -32,6 +32,9 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW) =>
   const asked: string[] = []
   const sent: string[] = []
   const toasts: string[] = []
+  /** The auto keep-warm setting, as the /config menu holds it now. */
+  const settings = { autoKeepWarm: 'off' }
+  on('config.list', () => ({ value: [{ key: 'emberline.autoKeepWarm', label: 'Auto keep-warm', kind: 'choice', value: settings.autoKeepWarm, options: ['off', '1h', '2h', '6h', '12h'], provider: { kind: 'plugin', name: 'emberline' }, isLocked: false }] }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'x' } }))
   on('session.cwd', () => ({ value: '/home/k/demo' }) as never)
@@ -60,7 +63,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW) =>
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: MODEL, ...USAGE } } as never
   })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/home/k/demo' })
-  return { clock, asked, sent, saved, toasts }
+  return { clock, asked, sent, saved, toasts, settings }
 }
 const reply = async ($: Engine) => {
   await ($.prompt.submit as (e: unknown) => Promise<unknown>)({ text: 'hi' })
@@ -978,4 +981,73 @@ test('no missed-ping notice when keep-warm is off, or its time ran out before th
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
   await clock.advance(MIN)
   expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})
+
+test('auto keep-warm switches on at a turn\'s end for a large session, and pings while it is away', async ($, on) => {
+  const { clock, asked, settings } = await start($, on)
+  settings.autoKeepWarm = '2h'
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm on (2h)')
+  await clock.advance(51 * MIN)
+  expect(asked.length).toBe(1)
+})
+
+test('auto keep-warm reads the setting as it is now, and stays out of a session where the person switched keep-warm off', async ($, on) => {
+  const { clock, asked, settings } = await start($, on)
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+  settings.autoKeepWarm = '1h'
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm on (1h)')
+  await command($, 'off')
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+  await clock.advance(55 * MIN)
+  expect(asked).toEqual([])
+})
+
+test('after /clear, auto keep-warm may switch on again: it is a new conversation', async ($, on) => {
+  const { settings } = await start($, on)
+  settings.autoKeepWarm = '2h'
+  await reply($)
+  await command($, 'off')
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm on (2h)')
+})
+
+test('the open card carries the hit of this conversation\'s requests, and /clear starts it over', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await reply($)
+  await clock.advance(61 * MIN) // cold opens the card
+  let ui = await band($)
+  const alts = async () => (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
+  expect((await alts()).some(a => a.includes('Cache hit over the last 2 requests: lowest 100%, latest 100%.'))).toBe(true)
+  await ui.unmount()
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+  await reply($)
+  await clock.advance(61 * MIN)
+  ui = await band($)
+  expect((await alts()).some(a => a.includes('Cache hit over'))).toBe(false)
+  await ui.unmount()
+})
+
+test('auto keep-warm also stays out after Off from the picker, or after a ping that missed the cache', async ($, on) => {
+  const missed: Fork = () => ({ isAnswered: true, text: 'ok', usage: { ...USAGE, cache_read_input_tokens: 0 } })
+  const { clock, settings } = await start($, on, missed)
+  settings.autoKeepWarm = '2h'
+  await reply($)
+  const ui = await band($)
+  await ui.select({ key: 'warm-pick', value: 'off' })
+  await ui.unmount()
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm on (2h)')
+  await clock.advance(51 * MIN) // the ping reads nothing from the cache and stops keep-warm
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
 })

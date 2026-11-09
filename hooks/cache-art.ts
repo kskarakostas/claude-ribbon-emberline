@@ -23,6 +23,9 @@ export const HUE: Record<Mode, string> = { warm: '#7fb09a', cold: '#6aaabd' }
 export const INK = '#1c1a16'
 export const WORD: Record<Mode, string> = { warm: 'WARM', cold: 'COLD' }
 
+/** A hit share under this means a request rebuilt most of the cache. */
+export const HIT_LOW_AT = 50
+
 /** The prompt cache lives an hour after the last request that read or wrote it, unless the engine reports 5 minutes. */
 export const TTL_MIN = 60
 export const TTL_MS = TTL_MIN * 60 * 1000
@@ -236,7 +239,34 @@ const CARD_H = 60
 /** The extra height of the keep-warm tally row. */
 const NOTE_H = 18
 
-export const cardSvg = (v: CacheView, ember: EmberView | null = null, note: string | null = null): { source: string; w: number; h: number; alt: string } => {
+/** How many recent requests the card's hit strip holds, and its size under the token count. */
+export const HITS_MAX = 20
+const HITS_X = 240
+const HITS_W = 126
+const HITS_H = 8
+const HITS_BOTTOM = 58
+
+/** The cache hit of recent requests as a strip of bars, a low one in amber, and the same in words; empty under two. */
+const hitStrip = (hits: readonly number[]): { svg: string; alt: string } => {
+  if (hits.length < 2) return { svg: '', alt: '' }
+  const slot = HITS_W / HITS_MAX
+  const svg = hits
+    .map((hit, i) => {
+      const h = Math.max(1, (Math.min(100, hit) / 100) * HITS_H)
+      const fill = hit < HIT_LOW_AT ? WARN : MUTED
+      return `<rect class="hit" x="${(HITS_X + i * slot).toFixed(1)}" y="${(HITS_BOTTOM - h).toFixed(1)}" width="${(slot * 0.7).toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}"/>`
+    })
+    .join('')
+  const alt = `Cache hit over the last ${hits.length} requests: lowest ${Math.min(...hits)}%, latest ${hits[hits.length - 1]}%.`
+  return { svg, alt }
+}
+
+export const cardSvg = (
+  v: CacheView,
+  ember: EmberView | null = null,
+  note: string | null = null,
+  hits: readonly number[] = [],
+): { source: string; w: number; h: number; alt: string } => {
   const { mode } = v
   const cold = mode === 'cold'
   const hue = HUE[mode]
@@ -261,6 +291,8 @@ export const cardSvg = (v: CacheView, ember: EmberView | null = null, note: stri
   const share = v.window > 0 ? Math.round((v.tokens / v.window) * 100) : 0
   g += t(240, 18, cold ? 'RE-CACHE' : 'IN CACHE', 11, 700, MUTED, 'start', 1.2)
   g += t(240, 44, tok(v.tokens), 20, 600, TEXT) + t(296, 44, `${share}% of ${tok(v.window)}`, 11, 500, MUTED)
+  const strip = hitStrip(hits.slice(-HITS_MAX))
+  g += strip.svg
   g += vline(376)
 
   // What the next message costs, by model.
@@ -284,6 +316,6 @@ export const cardSvg = (v: CacheView, ember: EmberView | null = null, note: stri
     : held
       ? `Cache warm. Ember holds it for ${ember.left} more, then it goes cold about ${ember.coldAt}. ${tok(v.tokens)} tokens cached.`
       : `Cache warm. Goes cold in ${left} minute${left === 1 ? '' : 's'}. ${tok(v.tokens)} tokens cached.`
-  const alt = note ? `${alt0} ${note}` : alt0
+  const alt = [alt0, strip.alt, note].filter(Boolean).join(' ')
   return { source: svgDoc(CARD_W, h, g, true), w: CARD_W, h, alt }
 }
