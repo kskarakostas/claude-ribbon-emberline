@@ -21,13 +21,16 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 
 **Behind `ⓘ`**
 - Each context category with its tokens and share, counted locally with no API call.
-- Idle time, tokens in cache, and what the next message costs on each model, your own at its exact version.
+- Idle time, tokens in cache, and what the next message costs on each model, your own at its exact version. A version the price table does not list yet shows its family's current price marked `~` here, and no price on the ribbon.
+- The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
 
 **On request**
-- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost.
-- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off, set with `claude plugin configure emberline`. With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
+- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
+- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
+
+Set options with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
 
 ## Keep-warm
 
@@ -37,8 +40,10 @@ Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm
 - It leaves no row in your conversation.
 - While it holds, it also skips the app's idle compaction, so your full context stays. Compaction at the context limit still runs.
 - It is off by default, per session. With it off, Emberline calls a model only when you ask for a ping (`/keep-warm ping` or `Ping now`), and never while a turn runs.
+- To have it switch on by itself, set `autoKeepWarm` to 1h, 2h, 6h or 12h. When a turn ends in a session over 100k tokens, keep-warm then switches on for that length. It stays off for the rest of a conversation once you switch it off, an until time ends, or a ping fails; `/clear` starts a new conversation. It leaves a 5-minute cache alone.
 - A length you pick counts from your last prompt, and each new prompt starts it again; an until time stays fixed. The cache then stays warm up to an hour past the last ping.
 - When the time runs out with the cache still warm, a notification says so and when the cache will go cold.
+- If the computer sleeps through the minutes a ping was due, a notification says the ping was missed and when the cache goes cold. Both notifications follow the `warnMinutes` setting and the 100k floor.
 - It stops at `/clear`, or as soon as a ping errors, misses the cache, or does not answer in 3 minutes.
 - After `/model` it waits for your next message, because the new model starts its own cache. If the app reports a 5-minute cache (it says so on a model switch or a resume), the ribbon counts 5 minutes, prices the 5-minute write, and keep-warm does not ping.
 
