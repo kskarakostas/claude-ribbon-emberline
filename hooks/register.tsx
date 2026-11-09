@@ -78,6 +78,8 @@ const HIT_CELLS = 11
 const FILL_CELLS = 14
 const COST_CELLS = 10
 const MINI_CELLS = 9
+/** What ` ember 1h 12m` spends beyond the ` 42m` it replaces. */
+const EMBER_CELLS = 9
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
 const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
@@ -645,7 +647,11 @@ export const register: Register = (on, options) => {
     const isHitLow = hitValue !== null && hitValue < HIT_LOW_AT
     const fillLabel = view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
     // shortcut: these widths are estimates in cells; measure them if a wide row still overflows.
-    const capMs = (await read($, warm)).capMs
+    const { capMs, lastPromptAt } = await read($, warm)
+    // While Ember holds, each ping restarts the cache hour, so that countdown never
+    // reaches zero: show how long Ember has left. Past the cap, the hour is true again.
+    const emberLeftMs = !cold && capMs !== null ? capMs - (now - lastPromptAt) : 0
+    const ember = emberLeftMs > 0 ? `ember ${fmtIdle(emberLeftMs)}` : null
     const capValue = capMs === null ? 'off' : `${capMs / HOUR_MS}h`
     const picks = WARM_PICKS.includes(capValue) ? WARM_PICKS : [...WARM_PICKS, capValue]
     const warmButton = (
@@ -664,7 +670,7 @@ export const register: Register = (on, options) => {
       </Box>
     )
     // The tokens always show; only what is left after them is spare.
-    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0)
+    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? EMBER_CELLS : 0)
     const showHit = kind !== 'wide' || spare >= HIT_CELLS
     const composition = await read($, mix)
     const showMini = kind === 'wide' && spare >= HIT_CELLS + MINI_CELLS
@@ -694,7 +700,9 @@ export const register: Register = (on, options) => {
           mine ? <Text key="cost" color={TEXT} bold>{usd(costOf(mine, mode, view.tokens))}</Text> : null,
         ]
       : [
-          <Text key="left" color={warnMin !== null && minsLeft <= warnMin ? WARN : hue} bold>{` ${minsLeft}m`}</Text>,
+          ember
+            ? <Text key="left" color={hue} bold>{` ${ember}`}</Text>
+            : <Text key="left" color={warnMin !== null && minsLeft <= warnMin ? WARN : hue} bold>{` ${minsLeft}m`}</Text>,
           hitLabel && showHit ? (
             <Text key="hit" color={isHitLow ? TEXT : MUTED} bold={isHitLow}>{` · ${hitLabel}`}</Text>
           ) : null,
@@ -745,7 +753,7 @@ export const register: Register = (on, options) => {
           {open ? null : (
             <Box key="block" flexDirection="column" flexShrink={0} marginRight={2}>
               <Box flexDirection="row" alignItems="center">{badge}</Box>
-              <Text color={hue} bold>{cold ? `${view.idle} idle` : `${Math.max(0, TTL_MIN - view.idleMin)}m`}</Text>
+              <Text color={hue} bold>{cold ? `${view.idle} idle` : (ember ?? `${minsLeft}m`)}</Text>
               {mine ? (
                 <Box flexDirection="row">
                   <Text color={TEXT} bold>{usd(costOf(mine, mode, view.tokens))}</Text>

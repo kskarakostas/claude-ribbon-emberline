@@ -87,8 +87,31 @@ test('switched on, it pings at 50 minutes and the cache stays warm past the hour
 
   await clock.advance(19 * MIN) // 70 minutes after the last real request
   const ui = await band($)
-  expect(await ui.find({ type: 'Text', text: /^ \d+m$/ })).toBeDefined()
+  expect((await ui.findAll({ type: 'Svg' })).map(s => s.props.alt)).toContain('WARM')
   await ui.unmount()
+})
+
+test('while Ember holds, the band counts down Ember, then hands back to the cache hour', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, '2h')
+
+  await clock.advance(70 * MIN)
+  const ui = await band($)
+  expect(await ui.find({ text: ' ember 50m' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ \d+m$/ })).toBeUndefined()
+  await ui.unmount()
+
+  const stacked = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 53 } })
+  expect(await stacked.find({ text: 'ember 50m' })).toBeDefined()
+  await stacked.unmount()
+
+  // Past the cap no ping comes, so the cache hour is the true countdown again.
+  await clock.advance(55 * MIN)
+  const after = await band($)
+  expect(await after.find({ type: 'Text', text: /^ ember/ })).toBeUndefined()
+  expect(await after.find({ type: 'Text', text: /^ \d+m$/ })).toBeDefined()
+  await after.unmount()
 })
 
 test('the cap stops the pings and lets the cache go cold', async ($, on) => {
