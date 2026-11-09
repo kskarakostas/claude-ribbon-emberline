@@ -23,20 +23,22 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - Each context category with its tokens and share, counted locally with no API call.
 - Idle time, tokens in cache, and what the next message costs on each model, your own at its exact version.
 - While keep-warm holds, its time left and about when the cache will go cold.
+- After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
 
 **On request**
-- An Agents button while subagents run, and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost.
+- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, any time) with each subagent's model, time, tokens and estimated cost.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off, set with `claude plugin configure emberline`.
 
 ## Keep-warm
 
-Pick 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`.
+Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`. `Ping now` in the same picker pings at once and shows what the cache served. The mobile app has no picker, only an on and off button for 2h.
 
 - 50 minutes after the last request, one small side request reads the cached conversation and resets the hour. No automatic ping runs while a turn is open, for example at a permission prompt.
 - It leaves no row in your conversation.
 - While it holds, it also skips the app's idle compaction, so your full context stays. Compaction at the context limit still runs.
-- It is off by default, per session. With it off, Emberline calls a model only when you run `/keep-warm ping`.
+- It is off by default, per session. With it off, Emberline calls a model only when you ask for a ping (`/keep-warm ping` or `Ping now`), and never while a turn runs.
 - The time you pick counts from your last prompt, and each new prompt starts it again. The cache then stays warm up to an hour past the last ping.
+- When the time runs out with the cache still warm, a notification says so and when the cache will go cold.
 - It stops at `/clear`, or as soon as a ping errors, misses the cache, or does not answer in 3 minutes.
 - After `/model` it waits for your next message, because the new model starts its own cache. If the app reports a 5-minute cache (it says so on a model switch or a resume), the ribbon counts 5 minutes, prices the 5-minute write, and keep-warm does not ping.
 

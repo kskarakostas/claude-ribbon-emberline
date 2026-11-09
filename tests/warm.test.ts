@@ -31,6 +31,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD) => {
   const clock = mock.clock(on, { now: NOW })
   const asked: string[] = []
   const sent: string[] = []
+  const toasts: string[] = []
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'x' } }))
   on('session.cwd', () => ({ value: '/home/k/demo' }) as never)
@@ -40,7 +41,10 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD) => {
     sent.push(e.text)
     return { value: { isSent: true, channel: 'test' } } as never
   })
-  on('ui.toast', () => ({ value: undefined }) as never)
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
   on('ui.invalidate', () => ({ value: undefined }) as never)
   on('model.fork', async (_, e) => {
     asked.push(e.prompt)
@@ -56,7 +60,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD) => {
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: MODEL, ...USAGE } } as never
   })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/home/k/demo' })
-  return { clock, asked, sent, saved }
+  return { clock, asked, sent, saved, toasts }
 }
 const reply = async ($: Engine) => {
   await ($.prompt.submit as (e: unknown) => Promise<unknown>)({ text: 'hi' })
@@ -323,6 +327,104 @@ test('a later switch to a 1-hour cache restores the hour', async ($, on) => {
   await ui.unmount()
 })
 
+const hhmm = (ms: number) => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+test('Ping now in the picker pings, says what the cache served, and keeps the time picked', async ($, on) => {
+  const { asked, toasts } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  const ui = await band($)
+  expect((await ui.find({ key: 'warm-pick' }))?.props.options).toContainEqual({ value: 'ping', label: 'Ping now' })
+  await ui.select({ key: 'warm-pick', value: 'ping' })
+  expect(asked.length).toBe(1)
+  expect(toasts).toContain('Ping read 299k tokens from the cache.')
+  expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('2h')
+  await ui.unmount()
+})
+
+test('Ping now waits while a turn runs', async ($, on) => {
+  const { asked, toasts } = await start($, on)
+  await reply($)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 'open', text: 'hi' })
+  const ui = await band($)
+  await ui.select({ key: 'warm-pick', value: 'ping' })
+  expect(asked).toEqual([])
+  expect(toasts).toContain('Not pinged: a turn is running.')
+  await ui.unmount()
+})
+
+test('a second ping asked while one is out says so', async ($, on) => {
+  let release: () => void = () => {}
+  const gate = new Promise<void>(r => (release = r))
+  const { clock, asked } = await start($, on, () => gate.then(GOOD))
+  await reply($)
+  const first = command($, 'ping')
+  await clock.advance(1000) // the first is now out, waiting on the fork
+  expect(asked.length).toBe(1)
+  expect((await command($, 'ping')).text).toBe('A ping is already out.')
+  release()
+  await first
+})
+
+test('a ping whose cost is unknown makes the tally a floor', async ($, on) => {
+  let forks = 0
+  const { clock } = await start($, on, () => (forks++ === 0 ? new Promise(() => {}) : GOOD()))
+  await reply($)
+  await command($, '2h')
+  await clock.advance(54 * MIN) // the first ping times out at 53 minutes
+  await command($, 'ping')
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  expect(JSON.stringify(await ui.find({ key: 'card' }))).toContain('Ember: 2 pings, at least $0.06 spent')
+  await ui.unmount()
+})
+
+test('the card keeps an Ember ledger for this session', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  await clock.advance(101 * MIN) // pings at 50 and 100 minutes
+
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  const card = JSON.stringify(await ui.find({ key: 'card' }))
+  // Each ping: 299k read at $0.20, 10 input at $4, 20 output at $20, 50 written at $8 per million.
+  const each = (299_000 * 0.2 + 10 * 4 + 20 * 20 + 50 * 8) / 1e6
+  expect(card).toContain(`Ember: 2 pings, $${(2 * each).toFixed(2)} spent, against $2.40 to re-cache. Last ping ${hhmm(NOW + 100 * MIN)} read 299k.`)
+  await ui.unmount()
+})
+
+test('when Ember runs out it says so once, with the time the cache goes cold', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  await clock.advance(121 * MIN)
+  expect(sent.filter(t => t.includes('Ember ended'))).toEqual([`demo: Ember ended. 300k tokens go cold about ${hhmm(NOW + 160 * MIN)}`])
+  await clock.advance(20 * MIN)
+  expect(sent.filter(t => t.includes('Ember ended')).length).toBe(1)
+})
+
+test('Ember running out on a cache already cold says nothing', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '1h')
+  await modelSwitch($, { to_model: 'claude-sonnet-5-5' })
+  await clock.advance(61 * MIN)
+  expect(sent.filter(t => t.includes('Ember ended'))).toEqual([])
+})
+
+test('switching Ember off is not Ember running out', async ($, on) => {
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '1h')
+  await command($, 'off')
+  await clock.advance(70 * MIN)
+  expect(sent.filter(t => t.includes('Ember ended'))).toEqual([])
+})
+
 test('a 5-minute cache gets no expiry warning after every reply', async ($, on) => {
   const { clock, sent } = await start($, on)
   await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
@@ -461,7 +563,7 @@ test('the band picker sets the time and switches it off', async ($, on) => {
   const pick = await ui.find({ key: 'warm-pick' })
   expect(pick?.props.label).toBe('Ember')
   expect(pick?.props.value).toBe('off')
-  expect((pick?.props.options as { value: string }[]).map(o => o.value)).toEqual(['off', '2h', '6h', '12h'])
+  expect((pick?.props.options as { value: string }[]).map(o => o.value)).toEqual(['off', '1h', '2h', '6h', '12h', 'ping'])
 
   await ui.select({ key: 'warm-pick', value: '12h' })
   expect((await ui.find({ key: 'warm-pick' }))?.props.value).toBe('12h')

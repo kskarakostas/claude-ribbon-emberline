@@ -573,7 +573,7 @@ test('the tokens stay on the ribbon at the width the app really uses, with agent
   await ui.unmount()
 })
 
-test('the Agents button shows only while agents run, counting those running', async ($, on) => {
+test('the Agents button counts running agents, and stays, dimmed, once they finish', async ($, on) => {
   await start($, on)
   await reply($)
   const ui = await band($)
@@ -583,7 +583,9 @@ test('the Agents button shows only while agents run, counting those running', as
   expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents 1')
 
   await end($, 'answer', 'a1')
-  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
+  const after = await ui.find({ key: 'agents-toggle' })
+  expect(after?.props.label).toBe('Agents')
+  expect(after?.props.dimColor).toBe(true)
   await ui.unmount()
 })
 

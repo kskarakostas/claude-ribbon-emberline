@@ -233,8 +233,10 @@ export const roboSvg = (mode: Mode): string => svgDoc(ROBO_SIZE, ROBO_SIZE, robo
 /** Real CSS pixels: narrower than the slot, so the card shows at this size, not shrunk. */
 const CARD_W = 720
 const CARD_H = 60
+/** The extra height of the keep-warm tally row. */
+const NOTE_H = 18
 
-export const cardSvg = (v: CacheView, ember: EmberView | null = null): { source: string; w: number; h: number; alt: string } => {
+export const cardSvg = (v: CacheView, ember: EmberView | null = null, note: string | null = null): { source: string; w: number; h: number; alt: string } => {
   const { mode } = v
   const cold = mode === 'cold'
   const hue = HUE[mode]
@@ -272,10 +274,15 @@ export const cardSvg = (v: CacheView, ember: EmberView | null = null): { source:
     g += t(x, 50, m.NAME, 10, 700, mine ? hue : MUTED, 'start', 0.6)
   })
 
-  const alt = cold
+  // Keep-warm's tally for the session, on a row of its own under the card.
+  const h = note ? CARD_H + NOTE_H : CARD_H
+  if (note) g += t(0, CARD_H + 12, note, 11, 500, MUTED)
+
+  const alt0 = cold
     ? `Cache cold. Idle ${v.idle}. Next message re-caches ${tok(v.tokens)} tokens.`
     : held
       ? `Cache warm. Ember holds it for ${ember.left} more, then it goes cold about ${ember.coldAt}. ${tok(v.tokens)} tokens cached.`
       : `Cache warm. Goes cold in ${left} minute${left === 1 ? '' : 's'}. ${tok(v.tokens)} tokens cached.`
-  return { source: svgDoc(CARD_W, CARD_H, g, true), w: CARD_W, h: CARD_H, alt }
+  const alt = note ? `${alt0} ${note}` : alt0
+  return { source: svgDoc(CARD_W, h, g, true), w: CARD_W, h, alt }
 }

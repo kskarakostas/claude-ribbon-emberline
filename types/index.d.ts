@@ -60,6 +60,12 @@ export type Warm = { capMs: number | null; lastPromptAt: number }
 /** One ping as `$.store` keeps it under `pingLog`: what the cache served of the context it expected. */
 export type PingRecord = { at: number; served: number; tokens: number; isServed: boolean }
 
+/**
+ * This session's pings: how many, what they cost at list price, and the last one's time and
+ * tokens served. `isFloor` is set once a ping's cost could not be known (it timed out or threw).
+ */
+export type Ledger = { count: number; costUsd: number; lastAt: number; lastServed: number; isFloor: boolean }
+
 declare module 'claude-code' {
   interface PluginState {
     'emberline': {
@@ -74,6 +80,8 @@ declare module 'claude-code' {
       warnedFor: number
       warm: Warm
       ttl: number
+      ledger: Ledger | null
+      endedFor: number
     }
   }
 }

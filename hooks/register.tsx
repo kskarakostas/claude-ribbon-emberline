@@ -1,12 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { addUsage, ordered } from './agents'
+import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, shouldPing } from './warm'
-import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
+import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
   cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, kindOf, nextCost, roboSvg, usd,
@@ -43,6 +43,10 @@ const background = atom({ plugin: 'emberline', key: 'background' } as const, [] 
 const mix = atom({ plugin: 'emberline', key: 'mix' } as const, null as ContextMix | null)
 /** The `lastAt` the expiry warning last fired for, so each cache cycle warns once. */
 const warnedFor = atom({ plugin: 'emberline', key: 'warnedFor' } as const, 0)
+/** The end of the keep-warm window the "Ember ended" notice last fired for, so each window tells once. */
+const endedFor = atom({ plugin: 'emberline', key: 'endedFor' } as const, 0)
+/** This session's pings, for the card. */
+const ledger = atom({ plugin: 'emberline', key: 'ledger' } as const, null as Ledger | null)
 
 const warm = atom({ plugin: 'emberline', key: 'warm' } as const, { capMs: null, lastPromptAt: 0 } as Warm)
 /** How long this session's cache lives, as the engine last reported it on a model switch or resume. */
@@ -59,7 +63,9 @@ const COMPACT_SKIPS = 'compactSkips'
 /** How often a running turn recounts what fills the context. */
 const MIX_REFRESH_MS = 30_000
 const WARM_USAGE = 'Usage: /keep-warm [1h to 12h | off | ping]. Alone it switches 2h on or off.'
-const WARM_PICKS = ['off', '2h', '6h', '12h']
+const WARM_PICKS = ['off', '1h', '2h', '6h', '12h']
+/** The picker entry that pings now instead of setting a time. */
+const PING_PICK = 'ping'
 /** A timer's ping and a command's cannot overlap. Lost on reload, which ends any ping. */
 type PingGuard = { isPinging: boolean }
 
@@ -182,17 +188,23 @@ const ping = async ($: EngineInterface, guard: PingGuard): Promise<number | null
   let timer: { cancel(): void } | undefined
   let startedAt = 0
   let tokens = 0
+  let costUsd: number | null = null
   try {
     startedAt = await $.clock.now()
-    tokens = (await read($, cache))?.tokens ?? 0
+    const held = await read($, cache)
+    tokens = held?.tokens ?? 0
+    const model = held?.model || (await $.session.model())
     // A fork cannot be cancelled, so a late one may still bill; the timeout only stops waiting.
     const late = new Promise<null>(resolve => {
       timer = $.clock.after(PING_TIMEOUT_MS, () => resolve(null))
     })
     const r = await Promise.race([$.model.fork({ prompt: PING_PROMPT }), late])
     if (r === null) isTimedOut = true
-    // A reply with no text still completed; an error's usage says nothing about the cache.
-    else if ((r.isAnswered || r.reason === 'empty-reply') && 'usage' in r) served = r.usage.cache_read_input_tokens
+    else if ('usage' in r) {
+      // Every answer with usage was billed; only a completed one says anything about the cache.
+      costUsd = costOf(model, r.usage)
+      if (r.isAnswered || r.reason === 'empty-reply') served = r.usage.cache_read_input_tokens
+    }
   } catch {
     served = 0
   } finally {
@@ -201,6 +213,14 @@ const ping = async ($: EngineInterface, guard: PingGuard): Promise<number | null
   }
   const isServed = served > 0 && served >= tokens * SERVED_SHARE
   await recordPing($, { at: startedAt, served, tokens, isServed })
+  await update($, ledger, l => ({
+    count: (l?.count ?? 0) + 1,
+    costUsd: (l?.costUsd ?? 0) + (costUsd ?? 0),
+    lastAt: startedAt,
+    lastServed: served,
+    // A ping with no usage back (timed out, threw) or an unpriced model may still have billed.
+    isFloor: (l?.isFloor ?? false) || costUsd === null,
+  }))
   if (isServed) {
     // A reply that landed while the ping was out touched the cache later; keep its time.
     await update($, cache, c => (c ? { ...c, lastAt: Math.max(c.lastAt, startedAt) } : c))
@@ -224,18 +244,22 @@ const pingIfDue = async ($: EngineInterface, guard: PingGuard, isBusy: boolean):
   if (isDue && !guard.isPinging) await ping($, guard)
 }
 
-const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard): Promise<string> => {
+/** One ping on request, from the command or the picker, and what to tell the person. */
+const pingNow = async ($: EngineInterface, guard: PingGuard, isBusy: boolean): Promise<string> => {
+  if (isBusy) return 'Not pinged: a turn is running.' // its own requests keep the cache; a fork mid-turn could fail
+  const c = await read($, cache)
+  if (!c) return 'Nothing to ping yet.'
+  if (c.isCold || (await $.clock.now()) - c.lastAt >= LATE_MS) return 'Not pinged: the cache may have lapsed, and a ping would pay to rebuild it.'
+  if ((await read($, ttl)) < TTL_MS) return 'Not pinged: this session\'s cache lives 5 minutes, too short to keep warm.'
+  if (guard.isPinging) return 'A ping is already out.' // no await between this check and ping's claim
+  const served = await ping($, guard)
+  return served === null ? 'The ping did not read the cache, so keep-warm is off.' : `Ping read ${Math.round(served / 1000)}k tokens from the cache.`
+}
+
+const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard, isBusy: boolean): Promise<string> => {
   const arg = args.trim()
   const w = await read($, warm)
-  if (arg === 'ping') {
-    const c = await read($, cache)
-    if (!c || guard.isPinging) return 'Nothing to ping yet.'
-    if (c.isCold || (await $.clock.now()) - c.lastAt >= LATE_MS) return 'Not pinged: the cache may have lapsed, and a ping would pay to rebuild it.'
-    if ((await read($, ttl)) < TTL_MS) return 'Not pinged: this session\'s cache lives 5 minutes, too short to keep warm.'
-    if (guard.isPinging) return 'A ping is already out.' // no await between this check and ping's claim
-    const served = await ping($, guard)
-    return served === null ? 'The ping did not read the cache, so keep-warm is off.' : `Ping read ${Math.round(served / 1000)}k tokens from the cache.`
-  }
+  if (arg === 'ping') return pingNow($, guard, isBusy)
   if (arg === 'off' || (arg === '' && w.capMs !== null)) {
     await setCap($, null)
     return 'Keep-warm off.'
@@ -246,8 +270,31 @@ const warmCommand = async ($: EngineInterface, args: string, guard: PingGuard): 
   return `Keep-warm on: up to ${capMs / HOUR_MS}h of idle time, this session only.`
 }
 
-/** `off` is no cap: `capFrom` answers null for it. */
-const pickWarm = ($: EngineInterface, value: string): Promise<void> => setCap($, capFrom(value))
+/** `off` is no cap: `capFrom` answers null for it. `ping` pings now and leaves the time as it was. */
+const pickWarm = async ($: EngineInterface, value: string, guard: PingGuard, isBusy: boolean): Promise<void> => {
+  if (value === PING_PICK) {
+    $.ui.toast(await pingNow($, guard, isBusy))
+    $.ui.invalidate('ui.render') // a refused ping changes nothing, so redraw to put the picked time back
+  } else await setCap($, capFrom(value))
+}
+
+/** Tells the person once when keep-warm's window runs out while the cache is still warm, and when it goes cold. */
+const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
+  const w = await read($, warm)
+  const c = await read($, cache)
+  // The same opt-out and size floor as the expiry warning.
+  if (w.capMs === null || !c || warnMin === null || c.tokens < WARN_TOKENS) return
+  const now = await $.clock.now()
+  const end = w.lastPromptAt + w.capMs
+  if (now < end || (await read($, endedFor)) === end) return
+  await update($, endedFor, () => end)
+  const ttlMs = await read($, ttl)
+  if (c.isCold || now - c.lastAt >= ttlMs) return // already cold: nothing left to say
+  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
+  const text = `${project}: Ember ended. ${tok(c.tokens)} tokens go cold about ${fmtClock(c.lastAt + ttlMs)}`
+  const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
+  if (!sent?.isSent) $.ui.toast(text)
+}
 
 const toggleWarm = async ($: EngineInterface): Promise<void> => {
   const w = await read($, warm)
@@ -329,6 +376,7 @@ export const register: Register = (on, options) => {
         await pingIfDue($, guard, inTurn)
         // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
         if (!inTurn && !guard.isPinging) await warnIfDue($, warnMin)
+        if (!inTurn && !guard.isPinging) await endIfDue($, warnMin)
       } catch {
         // The next tick tries again.
       }
@@ -339,7 +387,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'keep-warm' }, async ($, e) => ({ text: await warmCommand($, e.args, guard) }))
+  on('command.run', { command: 'keep-warm' }, async ($, e) => ({ text: await warmCommand($, e.args, guard, inTurn) }))
 
   // Only a prompt reopens the idle window. A turn would not do: nothing here can rule
   // out a fork raising turn events, and that would let the pings run on for ever.
@@ -435,7 +483,10 @@ export const register: Register = (on, options) => {
       await update($, cache, () => null)
       await update($, fold, () => null)
       await update($, mix, () => null)
-      if (e.source === 'clear') await update($, warm, w => ({ ...w, capMs: null }))
+      if (e.source === 'clear') {
+        await update($, warm, w => ({ ...w, capMs: null }))
+        await update($, ledger, () => null) // a new conversation starts a new tally
+      }
     } else if ((e.source === 'resume' || e.source === 'fork') && typeof e.seconds_since_last_response === 'number') {
       const now = await $.clock.now()
       const lastAt = now - e.seconds_since_last_response * 1000
@@ -569,10 +620,16 @@ export const register: Register = (on, options) => {
 
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
+    // Once any subagent has run the button stays, dimmed when none runs, so the panel's costs stay one press away.
     const agentsButton =
-      runningAgents > 0 ? (
+      crew.length > 0 ? (
         <Box key="agents" flexShrink={0} marginRight={1}>
-          <Button key="agents-toggle" label={`Agents ${runningAgents}`} onPress={() => togglePane($)} />
+          <Button
+            key="agents-toggle"
+            label={runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents'}
+            dimColor={runningAgents === 0}
+            onPress={() => togglePane($)}
+          />
         </Box>
       ) : null
 
@@ -715,8 +772,8 @@ export const register: Register = (on, options) => {
             key="warm-pick"
             label="Ember"
             value={capValue}
-            options={picks.map(value => ({ value, label: value === 'off' ? 'Off' : value }))}
-            onSelect={value => pickWarm($, value)}
+            options={[...picks.map(value => ({ value, label: value === 'off' ? 'Off' : value })), { value: PING_PICK, label: 'Ping now' }]}
+            onSelect={value => pickWarm($, value, guard, inTurn)}
           />
         ) : (
           <Button key="warm-toggle" label={capMs === null ? 'Ember' : `Ember ${capMs / HOUR_MS}h`} onPress={() => toggleWarm($)} />
@@ -844,7 +901,14 @@ export const register: Register = (on, options) => {
 
     let card = null
     if (open && Svg) {
-      const c = cardSvg(view, emberView)
+      const tally = await read($, ledger)
+      const recache = nextCost(view.model, 'cold', view.tokens, view.ttlMin)
+      const note = tally
+        ? `Ember: ${tally.count} ping${tally.count === 1 ? '' : 's'}, ${tally.isFloor ? 'at least ' : ''}${usd(tally.costUsd)} spent` +
+          (recache === null ? '' : `, against ${usd(recache)} to re-cache`) +
+          `. Last ping ${fmtClock(tally.lastAt)} read ${tok(tally.lastServed)}.`
+        : null
+      const c = cardSvg(view, emberView, note)
       const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
