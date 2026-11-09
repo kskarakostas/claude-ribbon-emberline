@@ -30,7 +30,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` before any has run) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
 
-Set options with `Warn` and `Auto` behind `ⓘ`, with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
+Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no card), with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
 
 ## Keep-warm
 

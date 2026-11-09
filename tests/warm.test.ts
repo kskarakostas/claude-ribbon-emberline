@@ -37,7 +37,10 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW, sl
   /** The auto keep-warm setting, as the /config menu holds it now. */
   const settings: Record<string, string> = { autoKeepWarm: 'off', warnMinutes: '10' }
   const row = (field: string, options: string[]) => ({ key: `emberline.${field}`, label: field, kind: 'choice', value: settings[field], options, provider: { kind: 'plugin', name: 'emberline' }, isLocked: false })
-  on('config.list', () => ({ value: [row('warnMinutes', ['off', '5', '10']), row('autoKeepWarm', ['off', '1h', '2h', '6h', '12h'])] }) as never)
+  on('config.list', () =>
+    settings.hang === 'yes'
+      ? (new Promise(() => {}) as never) // another plugin's hook that never answers
+      : ({ value: [row('warnMinutes', ['off', '5', '10']), row('autoKeepWarm', ['off', '1h', '2h', '6h', '12h'])] }) as never)
   /** What `$.config.set` was asked, and a refusal to give, as a managed setting would. */
   const configSets: { key: string; value: unknown }[] = []
   const refuse = { reason: '' }
@@ -1329,5 +1332,41 @@ test('the expanded view opens the Agents panel before any subagent has run', asy
   expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
   await ui.press({ key: 'agents-open' })
   expect(opened).toEqual(['emberline-agents'])
+  await ui.unmount()
+})
+
+test('on mobile the length button steps from a custom length to the next longer one, and past 12h to off', async ($, on) => {
+  const { clock } = await start($, on)
+  const ui = await openCard($, clock, 'mobile')
+  await command($, '3h')
+  await ui.press({ key: 'm-ember' })
+  expect((await command($, 'status')).text).toContain('Keep-warm on (6h)')
+  await ui.press({ key: 'm-ember' })
+  await ui.press({ key: 'm-ember' })
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+  await ui.unmount()
+})
+
+test('a settings read that never answers does not hold up the pings', async ($, on) => {
+  const { clock, asked, settings } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  settings.hang = 'yes'
+  await clock.advance(51 * MIN)
+  expect(asked.length).toBe(1)
+})
+
+test('the countdown follows the warning setting as it is now', async ($, on) => {
+  const { clock, settings } = await start($, on)
+  await reply($)
+  await clock.advance(55 * MIN)
+  let ui = await band($)
+  expect((await ui.find({ type: 'Text', text: /^ 5m$/ }))?.props.color).toBe('#d0a85c')
+  await ui.unmount()
+  settings.warnMinutes = 'off'
+  ui = await band($)
+  const left = await ui.find({ type: 'Text', text: /^ 5m$/ })
+  expect(left).toBeDefined()
+  expect(left?.props.color).not.toBe('#d0a85c')
   await ui.unmount()
 })

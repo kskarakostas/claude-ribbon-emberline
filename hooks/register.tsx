@@ -200,21 +200,29 @@ const switchOff = async ($: EngineInterface): Promise<void> => {
   await update($, autoOff, () => true)
 }
 
-/** One of this plugin's settings as the /config menu holds it now, else as the session loaded it. */
-const optionOf = async ($: EngineInterface, field: string, loaded: unknown): Promise<unknown> => {
-  const rows = await $.config.list().catch(() => null)
-  const row = Array.isArray(rows) ? rows.find(r => r.key === `emberline.${field}`) : undefined
-  return row ? row.value : loaded
+/** How long a settings read may take before the load-time values stand in: a hung read must not hold up a ping. PROPOSED. */
+const CONFIG_WAIT_MS = 2_000
+/** The settings as the session loaded them. */
+type Loaded = { readonly warnMinutes?: unknown; readonly autoKeepWarm?: unknown }
+
+/** This plugin's settings as the /config menu holds them now, in one read, else as the session loaded them. */
+const settingsOf = async ($: EngineInterface, loaded: Loaded): Promise<{ warn: unknown; auto: unknown }> => {
+  let timer: { cancel(): void } | undefined
+  const late = new Promise<null>(resolve => {
+    timer = $.clock.after(CONFIG_WAIT_MS, () => resolve(null))
+  })
+  const rows = await Promise.race([$.config.list().catch(() => null), late])
+  timer?.cancel()
+  const valueOf = (field: string, fallback: unknown) => {
+    const row = Array.isArray(rows) ? rows.find(r => r.key === `emberline.${field}`) : undefined
+    return row ? row.value : fallback
+  }
+  return { warn: valueOf('warnMinutes', loaded.warnMinutes), auto: valueOf('autoKeepWarm', loaded.autoKeepWarm) }
 }
 
-/** The warning lead as the /config menu holds it now, so a change applies without a reload. */
-const warnMinNow = async ($: EngineInterface, loaded: unknown): Promise<number | null> => warnMinutesOf(await optionOf($, 'warnMinutes', loaded))
-
-/** The auto keep-warm length now; null for off. */
-const autoCapOf = async ($: EngineInterface, loaded: unknown): Promise<number | null> => {
-  const value = await optionOf($, 'autoKeepWarm', loaded)
-  return typeof value === 'string' ? capFrom(value) : null
-}
+/** The next length the mobile button steps to: the next pick longer than the window now, then off past 12h. */
+const nextEmber = (capMs: number | null): string =>
+  capMs === null ? (WARM_PICKS[1] ?? 'off') : (WARM_PICKS.slice(1).find(p => (capFrom(p) ?? 0) > capMs) ?? 'off')
 
 /** Saves one setting as the person would in /config; a refusal (a managed value, say) is told. */
 const setOption = async ($: EngineInterface, field: string, value: string): Promise<void> => {
@@ -241,12 +249,13 @@ const askWarm = async ($: EngineInterface): Promise<void> => {
 }
 
 /** At a turn's end: a large session with keep-warm off, that the person has not switched off, gets the auto length. */
-const autoWarmIfDue = async ($: EngineInterface, loaded: unknown): Promise<void> => {
+const autoWarmIfDue = async ($: EngineInterface, loaded: Loaded): Promise<void> => {
   const w = await read($, warm)
   const c = await read($, cache)
   if (w.capMs !== null || !c || c.tokens < WARN_TOKENS || (await read($, autoOff))) return
   if (!canHold(c, await read($, ttl))) return // a 5-minute cache cannot be held, so no auto window to show
-  const capMs = await autoCapOf($, loaded)
+  const { auto } = await settingsOf($, loaded)
+  const capMs = typeof auto === 'string' ? capFrom(auto) : null
   if (capMs !== null) await setCap($, capMs)
 }
 
@@ -561,7 +570,7 @@ export const register: Register = (on, options) => {
     $.clock.every(TICK_MS, async () => {
       $.ui.invalidate('ui.render')
       try {
-        const warnMin = await warnMinNow($, options.warnMinutes)
+        const warnMin = warnMinutesOf((await settingsOf($, options)).warn)
         // First, so a tick that wakes past a sleep judges the gap before anything moves the cache's time.
         await missedIfDue($, warnMin, () => !inTurn && !guard.isPinging) // read when it decides, not when the tick began
         // In this order: a ping at 50 minutes idle lands before a warning due in the same tick.
@@ -771,7 +780,7 @@ export const register: Register = (on, options) => {
     // turn.step stamps the exact request time; a turn that answered with no step seen floors at its end.
     const lastAt = e.usage && (!c || now - c.lastAt > e.durationMs) ? now : (c?.lastAt ?? null)
     await measure($, lastAt, e.usage?.model ?? null)
-    await autoWarmIfDue($, options.autoKeepWarm)
+    await autoWarmIfDue($, options)
     return r
   })
 
@@ -963,7 +972,8 @@ export const register: Register = (on, options) => {
     const cold = mode === 'cold'
     const hue = HUE[mode]
     const myCost = nextCost(view.model, mode, view.tokens, view.ttlMin)
-    const warnMin = await warnMinNow($, options.warnMinutes)
+    const settings = await settingsOf($, options)
+    const warnMin = warnMinutesOf(settings.warn)
     const minsLeft = Math.max(0, view.ttlMin - view.idleMin)
     const hitValue = cold ? null : (facts?.hit ?? null)
     const hitLabel = hitValue === null ? null : `${hitValue}% hit`
@@ -1143,30 +1153,24 @@ export const register: Register = (on, options) => {
         ) : (
           <Button key={key} label={`${label} ${name(value)} ▸`} onPress={() => onPick(values[(values.indexOf(value) + 1) % values.length] ?? values[0]!)} />
         )
-      const warnSet = String(await optionOf($, 'warnMinutes', options.warnMinutes))
-      const autoSet = String(await optionOf($, 'autoKeepWarm', options.autoKeepWarm))
+      const warnSet = String(settings.warn)
+      const autoSet = String(settings.auto)
       const warnValue = WARN_PICKS.includes(warnSet) ? warnSet : String(DEFAULT_WARN_MIN)
       const autoValue = WARM_PICKS.includes(autoSet) ? autoSet : 'off'
-      const gap = (key: string) => <Text key={key}>  </Text>
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
           {panel ? <Svg key="context" source={panel.source} alt={panel.alt} /> : null}
           <Svg key="cache-card" source={c.source} alt={c.alt} />
-          <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center">
+          <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
             {Select
               ? null
               : [
-                  choice('m-ember', 'Ember', capValue, WARM_PICKS, v => v, v => void pickWarm($, v, guard, inTurn)),
-                  gap('g-ember'),
+                  <Button key="m-ember" label={`Ember ${capValue} ▸`} onPress={() => pickWarm($, nextEmber(capMs), guard, inTurn)} />,
                   <Button key="m-ping" label="Ping now" onPress={() => pickWarm($, PING_PICK, guard, inTurn)} />,
-                  gap('g-ping'),
                   <Button key="m-status" label="Status" onPress={() => pickWarm($, STATUS_PICK, guard, inTurn)} />,
-                  gap('g-status'),
                 ]}
             {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
-            {gap('g-warn')}
             {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
-            {crew.length === 0 ? gap('g-auto') : null}
             {crew.length === 0 ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
           </Box>
         </Box>
