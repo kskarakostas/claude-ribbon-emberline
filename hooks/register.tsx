@@ -48,8 +48,8 @@ const mix = atom({ plugin: 'emberline', key: 'mix' } as const, null as ContextMi
 const warnedFor = atom({ plugin: 'emberline', key: 'warnedFor' } as const, 0)
 /** The end of the keep-warm window the "Ember ended" notice last fired for, so each window tells once. */
 const endedFor = atom({ plugin: 'emberline', key: 'endedFor' } as const, 0)
-/** The `lastAt` the missed-ping notice last fired for, so each cache cycle tells once. */
-const missedFor = atom({ plugin: 'emberline', key: 'missedFor' } as const, 0)
+/** The `lastAt` whose ping window a tick has already seen or judged, so a missed ping is told once and only after a real gap. */
+const seenFor = atom({ plugin: 'emberline', key: 'seenFor' } as const, 0)
 /** The person switched keep-warm off in this conversation, so auto keep-warm leaves it off. */
 const autoOff = atom({ plugin: 'emberline', key: 'autoOff' } as const, false)
 /** The cache hit of this conversation's recent requests, for the card's strip. */
@@ -210,6 +210,7 @@ const autoWarmIfDue = async ($: EngineInterface, loaded: unknown): Promise<void>
   const w = await read($, warm)
   const c = await read($, cache)
   if (w.capMs !== null || !c || c.tokens < WARN_TOKENS || (await read($, autoOff))) return
+  if (!canHold(c, await read($, ttl))) return // a 5-minute cache cannot be held, so no auto window to show
   const capMs = await autoCapOf($, loaded)
   if (capMs !== null) await setCap($, capMs)
 }
@@ -371,10 +372,13 @@ const pickWarm = async ($: EngineInterface, value: string, guard: PingGuard, isB
   else await setCap($, capMs)
 }
 
-/** A clock time does not come round again on the next prompt, as a cap does: once passed, keep-warm switches off. */
+/**
+ * A clock time does not come round again on the next prompt, as a cap does: once passed, keep-warm
+ * switches off, and stays off, since the person chose when it ends.
+ */
 const expireUntil = async ($: EngineInterface): Promise<void> => {
   const w = await read($, warm)
-  if (w.capMs !== null && w.untilAt && (await $.clock.now()) >= w.untilAt) await setCap($, null)
+  if (w.capMs !== null && w.untilAt && (await $.clock.now()) >= w.untilAt) await switchOff($)
 }
 
 /** Tells the person once when keep-warm's window runs out while the cache is still warm, and when it goes cold. */
@@ -396,21 +400,31 @@ const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<voi
 }
 
 /**
- * Tells the person once when keep-warm was on and its ping fell due, but the timer woke too
- * late to send it (a sleeping computer): the cache it was holding will lapse.
+ * Tells the person once when no tick ran between the ping falling due and the last moment it
+ * could go (the timer slept with the computer), while keep-warm was on and holding the cache.
+ * A tick inside that window, whatever it did there (pinged, waited on a turn), rules it out.
  */
 const missedIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
-  const w = await read($, warm)
   const c = await read($, cache)
-  if (w.capMs === null || !c || warnMin === null) return
-  const ttlMs = await read($, ttl)
   const now = await $.clock.now()
+  if (!c || c.lastAt <= 0 || now - c.lastAt < PING_MS) return
+  let isFirst = false
+  // One claim per cache cycle, inside the update, so ticks that wake together tell once.
+  await update($, seenFor, s => {
+    isFirst = s !== c.lastAt
+    return c.lastAt
+  })
+  if (!isFirst || now - c.lastAt < LATE_MS) return
+  const w = await read($, warm)
+  const ttlMs = await read($, ttl)
+  if (w.capMs === null || warnMin === null || c.tokens < WARN_TOKENS || !canHold(c, ttlMs)) return
+  const due = c.lastAt + PING_MS
   const end = w.untilAt ?? w.lastPromptAt + w.capMs
-  // Due inside the window, and now past the last moment a ping could go.
-  if (!canHold(c, ttlMs) || c.lastAt + PING_MS >= end || now - c.lastAt < LATE_MS) return
-  if ((await read($, missedFor)) === c.lastAt) return
-  await update($, missedFor, () => c.lastAt)
-  if (now >= end) await update($, endedFor, () => end) // one notice for the window, not two
+  // Due inside the window: past its end, a missing ping is keep-warm finishing, not missing.
+  // A switch-on after the wake needs no test: the first tick after the wake has claimed the cycle.
+  if (due >= end) return
+  await update($, warnedFor, () => c.lastAt) // this says when it goes cold: no expiry warning on top
+  if (now >= end) await update($, endedFor, () => end) // nor an "Ember ended" for the same window
   const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
   const coldAt = c.lastAt + ttlMs
   const text = `${project}: Ember missed its ping, likely while the computer slept. ${tok(c.tokens)} tokens ${now < coldAt ? 'go cold about' : 'went cold at'} ${fmtClock(coldAt)}`
@@ -503,11 +517,12 @@ export const register: Register = (on, options) => {
     $.clock.every(TICK_MS, async () => {
       $.ui.invalidate('ui.render')
       try {
+        // First, so a tick that wakes past a sleep judges the gap before anything moves the cache's time.
+        await missedIfDue($, warnMin)
         // In this order: a ping at 50 minutes idle lands before a warning due in the same tick.
         await pingIfDue($, guard, inTurn)
         // A ping still out from an earlier tick may yet reset the hour: no warning until it lands.
         if (!inTurn && !guard.isPinging) await warnIfDue($, warnMin)
-        if (!inTurn && !guard.isPinging) await missedIfDue($, warnMin)
         if (!inTurn && !guard.isPinging) await endIfDue($, warnMin)
         // After the notice had its chance, and whatever the turn or settings: an until time ends on time.
         await expireUntil($)

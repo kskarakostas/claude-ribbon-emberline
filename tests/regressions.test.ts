@@ -714,8 +714,8 @@ test('running subagents show on the upper row and leave when they end', async ($
 
 test('the card marks its own column as an estimate for a version the price table does not list', async () => {
   const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', ttlMin: 60 } as const
-  expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('≈$0.06')
-  expect(cardSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('≈')
+  expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('~$0.06')
+  expect(cardSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('~$')
 })
 
 test('the card draws the cache hit of recent requests, a low one in amber, and says it in words', async () => {
@@ -725,4 +725,12 @@ test('the card draws the cache hit of recent requests, a low one in amber, and s
   expect((card.source.match(/class="hit"/g) ?? []).length).toBe(3)
   expect((card.source.match(/class="hit" [^>]*fill="#d0a85c"/g) ?? []).length).toBe(1)
   expect(cardSvg(view, null, null, [96]).alt).not.toContain('Cache hit over')
+})
+
+test('the card\'s hit strip holds the last 20 requests', async () => {
+  const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const hits = Array.from({ length: 25 }, (_, i) => (i === 0 ? 10 : 90 + (i % 10)))
+  const card = cardSvg(view, null, null, hits)
+  expect((card.source.match(/class="hit"/g) ?? []).length).toBe(20)
+  expect(card.alt).toContain('Cache hit over the last 20 requests: lowest 90%, latest 94%.')
 })

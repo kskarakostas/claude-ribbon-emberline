@@ -29,6 +29,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW) =>
     return { value: undefined } as never
   })
   const clock = mock.clock(on, { now })
+  const span = nap(on, clock)
   const asked: string[] = []
   const sent: string[] = []
   const toasts: string[] = []
@@ -63,7 +64,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW) =>
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: { model: MODEL, ...USAGE } } as never
   })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/home/k/demo' })
-  return { clock, asked, sent, saved, toasts, settings }
+  return { clock, asked, sent, saved, toasts, settings, span }
 }
 const reply = async ($: Engine) => {
   await ($.prompt.submit as (e: unknown) => Promise<unknown>)({ text: 'hi' })
@@ -958,29 +959,102 @@ test('caps parse to hours within limits', async () => {
   expect(capFrom('2')).toBeNull()
 })
 
-test('a ping missed while the computer slept is told, once, with when the cache goes cold', async ($, on) => {
-  const { clock, sent } = await start($, on)
+/** A sleeping computer: every state read the band makes waits until the nap ends, so no tick runs inside it. */
+const nap = (on: On, clock: { now(): number; sleep(ms: number): Promise<void> }) => {
+  const span = { from: Infinity, to: 0 }
+  on('state.get', async (_, e, next) => {
+    const now = clock.now()
+    if (now >= span.from && now < span.to) await clock.sleep(span.to - now)
+    return next(e)
+  })
+  return span
+}
+/** A turn with no prompt before it: the cache's time moves, the idle window's start does not. */
+const turn = async ($: Engine) => {
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 't', text: 'hi' })
+  const stream = ($.turn.step as (e: unknown) => AsyncIterable<unknown>)({ turnId: 't', index: 0, model: MODEL, messageCount: 1 })
+  for await (const _ of stream) void _
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't', usage: { model: MODEL, ...USAGE } })
+}
+const clockAt = (ms: number) => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+const keepWarmNotices = (sent: string[]) => sent.filter(t => t.includes('Ember') || t.includes('go cold in'))
+
+test('a ping missed while the computer slept is told once, alone, with when the cache goes cold', async ($, on) => {
+  const { clock, sent, asked, span } = await start($, on)
+  await reply($)
   await command($, '2h')
-  // The timer wakes at 58.5 idle minutes: too late to ping without paying for a rebuild.
-  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
-  await clock.advance(30_000)
-  await clock.advance(30_000)
-  const coldAt = new Date(NOW - 3510_000 + HOUR_MS)
-  const at = `${String(coldAt.getHours()).padStart(2, '0')}:${String(coldAt.getMinutes()).padStart(2, '0')}`
-  expect(sent.filter(t => t.includes('missed'))).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens go cold about ${at}`])
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 59 * MIN
+  await clock.advance(60 * MIN)
+  expect(asked).toEqual([])
+  expect(keepWarmNotices(sent)).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens go cold about ${clockAt(NOW + HOUR_MS)}`])
 })
 
-test('no missed-ping notice when keep-warm is off, or its time ran out before the ping was due', async ($, on) => {
+test('a sleep past the hour says the cache went cold', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 70 * MIN
+  await clock.advance(71 * MIN)
+  expect(keepWarmNotices(sent)).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens went cold at ${clockAt(NOW + HOUR_MS)}`])
+})
+
+test('no missed-ping notice when Ember is switched on after the ping would have been due', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
+  await reply($)
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 59 * MIN
+  await clock.advance(59 * MIN)
+  await command($, '2h')
+  await clock.advance(MIN)
+  await clock.advance(40 * MIN)
+  await command($, '6h')
+  await clock.advance(MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})
+
+test('no missed-ping notice when the timer ran through the window, a turn kept the ping back, or its time ran out first', async ($, on) => {
   const { clock, sent } = await start($, on)
+  await reply($)
+  await command($, '2h')
+  await clock.advance(45 * MIN)
+  await ($.turn.start as (e: unknown) => Promise<unknown>)({ turnId: 't', text: 'hi' }) // a permission prompt, say
+  await clock.advance(16 * MIN)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+  await ($.turn.complete as (e: unknown) => Promise<unknown>)({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't' })
   await reply($)
   await command($, '1h') // one ping at 50 minutes; the next would fall past the hour
   await clock.advance(115 * MIN)
   expect(sent.filter(t => t.includes('missed'))).toEqual([])
-  await command($, 'off')
+})
+
+test('no missed-ping notice for a cache keep-warm cannot hold: a switched model starts its own', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
   await reply($)
-  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 3510, context_tokens: TOKENS, model: MODEL })
-  await clock.advance(MIN)
+  await command($, '2h')
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: 'claude-sonnet-5-5', requested_model: null, source: 'command',
+    context_tokens: TOKENS, prompt_cache_warm: false, cache_ttl: '1h', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 59 * MIN
+  await clock.advance(60 * MIN)
   expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})
+
+test('a missed ping and the end of Ember\'s window in the same sleep make one notice', async ($, on) => {
+  const { clock, sent, span } = await start($, on)
+  await command($, '1h') // the window ends an hour from here
+  await clock.advance(5 * MIN)
+  await turn($) // the cache's hour starts 5 minutes in; its ping falls due at 55, inside the window
+  span.from = NOW + 40 * MIN
+  span.to = NOW + 64 * MIN
+  await clock.advance(70 * MIN)
+  expect(keepWarmNotices(sent)).toEqual([`demo: Ember missed its ping, likely while the computer slept. 300k tokens go cold about ${clockAt(NOW + 65 * MIN)}`])
 })
 
 test('auto keep-warm switches on at a turn\'s end for a large session, and pings while it is away', async ($, on) => {
@@ -1048,6 +1122,57 @@ test('auto keep-warm also stays out after Off from the picker, or after a ping t
   await reply($)
   expect((await command($, 'status')).text).toContain('Keep-warm on (2h)')
   await clock.advance(51 * MIN) // the ping reads nothing from the cache and stops keep-warm
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+})
+
+test('no missed-ping notice for a sleep after Ember\'s window ended, though it is still switched on', async ($, on) => {
+  const { clock, sent, asked, span } = await start($, on)
+  await reply($)
+  await command($, '1h') // one ping at 50 minutes, then the window ends at 60
+  span.from = NOW + 95 * MIN
+  span.to = NOW + 110 * MIN
+  await clock.advance(111 * MIN)
+  expect(asked.length).toBe(1)
+  expect(sent.filter(t => t.includes('missed'))).toEqual([])
+})
+
+test('auto keep-warm stays out once an until time ends: the person chose when it stops', async ($, on) => {
+  const { clock, settings } = await start($, on)
+  settings.autoKeepWarm = '12h'
+  await reply($)
+  const end = new Date(NOW + 70 * MIN)
+  end.setSeconds(0, 0)
+  const hhmm = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`
+  await command($, `until ${hhmm}`)
+  await clock.advance(75 * MIN)
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+})
+
+test('auto keep-warm also stays out after the bare toggle or the mobile button switches it off', async ($, on) => {
+  const { settings } = await start($, on)
+  settings.autoKeepWarm = '2h'
+  await reply($)
+  await command($, '') // on, so the bare command switches it off
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+  await reply($)
+  const ui = await $.ui.mount({ plugin: 'emberline', surface: 'mobile', component: 'AbovePrompt', props: PROPS })
+  await ui.press({ key: 'warm-toggle' }) // on, so the button switches it off
+  await ui.unmount()
+  await reply($)
+  expect((await command($, 'status')).text).toContain('Keep-warm off')
+})
+
+test('auto keep-warm leaves a 5-minute cache alone: it cannot be held', async ($, on) => {
+  const { settings } = await start($, on)
+  settings.autoKeepWarm = '2h'
+  await ($.classic.PostModelSwitch as (e: unknown) => Promise<unknown>)({
+    from_model: MODEL, to_model: MODEL, requested_model: null, source: 'resume',
+    context_tokens: TOKENS, prompt_cache_warm: true, cache_ttl: '5m', estimated_cache_write_usd: 1.2, pricing: 'catalog',
+  })
   await reply($)
   expect((await command($, 'status')).text).toContain('Keep-warm off')
 })
