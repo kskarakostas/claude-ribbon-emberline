@@ -55,6 +55,19 @@ test('advance moves to the next step', async ($, on) => {
   await ui.unmount()
 })
 
+test('a new list starts its own pace: no time left until one of its steps finishes', async ($, on) => {
+  const clock = await start($, on)
+  await call($, UPDATE, { items: ITEMS, scope: 'first_task' })
+  await clock.advance(300_000)
+  await call($, UPDATE, { advance: true })
+  await call($, UPDATE, { items: ITEMS, scope: 'new_task' })
+
+  const ui = await band($, true)
+  expect(await ui.find({ text: /0\/3/ })).toBeDefined()
+  expect(await ui.find({ text: /left/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the row stays hidden when no turn runs', async ($, on) => {
   await start($, on)
   await call($, UPDATE, { items: ITEMS, scope: 'first_task' })

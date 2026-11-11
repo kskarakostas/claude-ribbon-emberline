@@ -24,7 +24,8 @@ export const applyPlan = (prev: Plan | null, value: unknown, now: number): Plan 
   if ('items' in input) {
     const steps = clean(input.items)
     if (!steps) return prev
-    return { steps, stepStartedAt: now, durations: prev?.durations ?? [] }
+    // A new list keeps its own pace: the last list's steps say nothing about these.
+    return { steps, stepStartedAt: now, durations: [] }
   }
   if (!prev) return null
 
@@ -49,6 +50,8 @@ export const applyPlan = (prev: Plan | null, value: unknown, now: number): Plan 
 
   const finished = finishedCount(steps) - finishedCount(prev.steps)
   if (finished <= 0) return { ...prev, steps }
+  // shortcut: a step's time includes any idle wait for the person between turns, since the
+  // list outlives turns; count only working time if the estimate misleads.
   const each = (now - prev.stepStartedAt) / finished
   return { steps, stepStartedAt: now, durations: [...prev.durations, ...Array<number>(finished).fill(each)] }
 }

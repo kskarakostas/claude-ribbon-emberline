@@ -704,6 +704,7 @@ export const register: Register = (on, options) => {
         await update($, warm, w => ({ ...w, capMs: null }))
         await update($, ledger, () => null) // a new conversation starts a new tally
         await update($, agents, () => []) // and has run no subagents
+        await update($, plan, () => null) // nor a task list
         await update($, hits, () => [])
         await update($, autoOff, () => false) // auto keep-warm may switch on again
       }
@@ -785,8 +786,8 @@ export const register: Register = (on, options) => {
       await update($, agents, list => list.map(a => (a.id === e.agentId ? { ...a, status, endedAt: at } : a)))
       return r
     }
-    // Every turn ends its list, however it ended; the next turn sends a new one.
-    await update($, plan, () => null)
+    // The list outlives the turn, as the app's does: a turn woken by an agent sends only
+    // progress. wrap_up ticks it done, a new list replaces it, /clear drops it.
     await update($, tools, () => [])
     await refreshMix($)
     const now = await $.clock.now()
@@ -866,12 +867,15 @@ export const register: Register = (on, options) => {
       return [<Text key={`${key}-on`} color={colour}>{d.on}</Text>, <Text key={`${key}-off`} color={EMPTY}>{d.off}</Text>]
     }
     const steps = await read($, plan)
-    const step = steps && e.props.isWorking ? currentOf(steps) : undefined
+    const bgRuns = await read($, background)
+    // Between turns the step stays while the work it waits on runs.
+    const isActive = e.props.isWorking || runningAgents > 0 || bgRuns.length > 0
+    const step = steps && isActive ? currentOf(steps) : undefined
     // One line: alone it spans the band; beside a plan step it takes at most a third, and
     // leaves the step its 12 cells. Short of that it moves to its own row under the step.
     const beside = Math.min(Math.floor(columns / 3), columns - STEP_CELLS - SEP_CELLS - 12)
     const stacks = step !== undefined && beside < 12
-    const busy = runningLabel(await read($, tools), crew, await read($, background), now, step && !stacks ? beside : columns - 2)
+    const busy = runningLabel(await read($, tools), crew, bgRuns, now, step && !stacks ? beside : columns - 2)
     const busyPart = busy ? <Text key="busy" color={MUTED}>{busy}</Text> : null
     const busyBeside = busyPart !== null && !stacks
     let planRow = busyPart ? <Box key="plan" flexDirection="row" paddingX={1}>{busyPart}</Box> : null

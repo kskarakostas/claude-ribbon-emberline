@@ -61,6 +61,7 @@ const start = async ($: Engine, on: On, o: Options = {}) => {
     return { result: {} }
   })
   on('classic.Stop', () => ({}) as never)
+  on('classic.SessionStart', () => ({}) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }) as never)
@@ -97,17 +98,71 @@ const reply = async ($: Engine) => {
 const band = ($: Engine, isWorking = false, bodyColumns = 120) =>
   $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: props(isWorking, bodyColumns) })
 
+// The app keeps its list until wrap_up or a new list; a woken turn sends only progress.
 for (const reason of ['aborted', 'error', 'answer']) {
-  test(`a turn that ends with ${reason} leaves no stale step for the next turn`, async ($, on) => {
+  test(`a turn that ends with ${reason} keeps the list for the next turn's progress`, async ($, on) => {
     await start($, on)
     await say($, { items: ITEMS, scope: 'first_task' })
     await end($, reason)
+    await say($, { advance: true })
 
     const ui = await band($, true)
-    expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Ship it/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /1\/2/ })).toBeDefined()
     await ui.unmount()
   })
 }
+
+test('a list wrapped up stays done on later turns', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  uses = [{ name: 'mcp__ccd_turn__wrap_up', input: { recap: 'Done.' } }]
+  await step($)
+  uses = []
+  await end($, 'answer')
+  await say($, { advance: true })
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Read the code|Ship it/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/clear drops the list: it is a new conversation', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await end($, 'answer')
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('between turns the step stays while subagents run, and goes when they end', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
+  await end($, 'answer')
+
+  const ui = await band($, false)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  await end($, 'answer', 'a1')
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('between turns the step stays while background work runs', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await end($, 'answer')
+  await ($.classic.Stop as (e: unknown) => Promise<unknown>)({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'Suite' }] })
+
+  const ui = await band($, false)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  await ($.classic.Stop as (e: unknown) => Promise<unknown>)({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [] })
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeUndefined()
+  await ui.unmount()
+})
 
 test('a subagent ending its own turn leaves the main plan alone', async ($, on) => {
   await start($, on)
