@@ -518,6 +518,23 @@ const isCounted = async ($: EngineInterface, agentId: string | undefined): Promi
   }
 }
 
+/** Where a prompt comes from when the person sends it: the prompt, the desktop app (an SDK host), Remote Control, Slack. */
+const PERSON = ['composer', 'sdk', 'bridge', 'slack-ping']
+
+/**
+ * A prompt the person sends while nothing runs starts a new request, so the last list
+ * ends: a task left without wrap_up does not linger, and no step's time spans the wait.
+ * A notification, trigger or peer message is not the person; a prompt typed over a
+ * running turn carries its `turnId`; while a subagent or background work runs, the list
+ * is still the one in hand.
+ */
+const endIdleList = async ($: EngineInterface, e: { origin?: { kind: string }; turnId?: string }): Promise<void> => {
+  if (!PERSON.includes(e.origin?.kind ?? '') || e.turnId !== undefined) return
+  if ((await read($, agents)).some(a => a.status === 'running')) return
+  if ((await read($, background)).length > 0) return
+  await update($, plan, () => null)
+}
+
 const dropTool = async ($: EngineInterface, id: number): Promise<void> => {
   try {
     await update($, tools, list => list.filter(t => t.id !== id))
@@ -612,6 +629,7 @@ export const register: Register = (on, options) => {
     if (e.isMeta || e.command) return next(e) // a wake or a slash command is not the person returning
     const now = await $.clock.now()
     await update($, warm, w => ({ ...w, lastPromptAt: now }))
+    await endIdleList($, e)
     return next(e)
   }).catch(($, e, next) => next(e)) // the band never holds up a prompt
 
@@ -787,7 +805,8 @@ export const register: Register = (on, options) => {
       return r
     }
     // The list outlives the turn, as the app's does: a turn woken by an agent sends only
-    // progress. wrap_up ticks it done, a new list replaces it, /clear drops it.
+    // progress. wrap_up ticks it done, a new list replaces it, /clear drops it, and so
+    // does a prompt typed while nothing runs (endIdleList).
     await update($, tools, () => [])
     await refreshMix($)
     const now = await $.clock.now()

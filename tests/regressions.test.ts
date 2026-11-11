@@ -62,6 +62,7 @@ const start = async ($: Engine, on: On, o: Options = {}) => {
   })
   on('classic.Stop', () => ({}) as never)
   on('classic.SessionStart', () => ({}) as never)
+  on('prompt.submit', (_, e) => ({ text: e.text }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }) as never)
@@ -124,6 +125,81 @@ test('a list wrapped up stays done on later turns', async ($, on) => {
 
   const ui = await band($, true)
   expect(await ui.find({ type: 'Text', text: /Read the code|Ship it/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+const submit = ($: Engine, extra: object = {}) =>
+  ($.prompt.submit as (e: unknown) => Promise<unknown>)({ text: 'next', wait: false, origin: { kind: 'composer' }, ...extra })
+const spawnOne = ($: Engine) =>
+  ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
+
+// The desktop app's own turns come as the SDK host's; Remote Control as the bridge.
+for (const kind of ['composer', 'sdk', 'bridge', 'slack-ping']) {
+  test(`a prompt the person sends (${kind}) while nothing runs ends the last list`, async ($, on) => {
+    await start($, on)
+    await say($, { items: ITEMS, scope: 'first_task' })
+    await end($, 'aborted')
+    await submit($, { origin: { kind } })
+    await say($, { advance: true })
+
+    const ui = await band($, true)
+    expect(await ui.find({ type: 'Text', text: /Read the code|Ship it/ })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+const NOT_THE_PERSON = [
+  ['a wake', { isMeta: true }],
+  ['a slash command', { command: { name: 'keep-warm' } }],
+  ['a finished agent\'s notification', { origin: { kind: 'task-notification' } }],
+  ['a scheduled trigger', { origin: { kind: 'scheduled-trigger' } }],
+] as const
+for (const [what, extra] of NOT_THE_PERSON) {
+  test(`${what} keeps the list: the person did not start a new request`, async ($, on) => {
+    await start($, on)
+    await say($, { items: ITEMS, scope: 'first_task' })
+    await end($, 'answer')
+    await submit($, extra)
+
+    const ui = await band($, true)
+    expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+    await ui.unmount()
+  })
+}
+
+test('a prompt typed while subagents run keeps the list', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await spawnOne($)
+  await end($, 'answer')
+  await submit($)
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a prompt typed while background work runs keeps the list', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await end($, 'answer')
+  await ($.classic.Stop as (e: unknown) => Promise<unknown>)({ hook_event_name: 'Stop', stop_hook_active: false, background_tasks: [{ id: 'b1', type: 'shell', status: 'running', description: 'Suite' }] })
+  await submit($)
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  await ui.unmount()
+})
+
+// Typed over a running turn, the prompt carries that turn's id; the engine's own test, not
+// the band's turn bookkeeping, which a fork's turn events could throw off.
+test('a prompt typed over a running turn keeps that turn\'s list', async ($, on) => {
+  await start($, on)
+  await say($, { items: ITEMS, scope: 'first_task' })
+  await submit($, { turnId: 't' })
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
   await ui.unmount()
 })
 

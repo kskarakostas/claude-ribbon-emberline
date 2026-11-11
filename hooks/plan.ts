@@ -50,8 +50,9 @@ export const applyPlan = (prev: Plan | null, value: unknown, now: number): Plan 
 
   const finished = finishedCount(steps) - finishedCount(prev.steps)
   if (finished <= 0) return { ...prev, steps }
-  // shortcut: a step's time includes any idle wait for the person between turns, since the
-  // list outlives turns; count only working time if the estimate misleads.
+  // shortcut: a prompt the person sends while nothing runs ends the list, so that wait never
+  // counts; a wait while agents or background work run, or before a scheduled wake (cron,
+  // ScheduleWakeup), still does. Count only working time if that misleads.
   const each = (now - prev.stepStartedAt) / finished
   return { steps, stepStartedAt: now, durations: [...prev.durations, ...Array<number>(finished).fill(each)] }
 }

@@ -15,7 +15,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The session's running cost at list price, when the row has room.
 
 **The upper row**
-- The current step of the task list, a step count and a rough time left. Like the app's list, it lasts across turns until the list is wrapped up, replaced or cleared with `/clear`; between turns it shows while subagents or background work run.
+- The current step of the task list, a step count and a rough time left. Like the app's list, it lasts across turns until the list is wrapped up, replaced or cleared with `/clear`, or you type a new prompt while nothing runs; between turns it shows while subagents or background work run.
 - Running subagents as one count, plus connector calls and shell commands past 5 seconds. A subagent's own calls stay inside its count.
 - Background work, added when a turn ends; more than two tasks show as a count with the oldest age.
 - It keeps to one line: what does not fit ends as `+N more`. Where the band is too narrow to share a line with the task step, it takes its own row below it.
