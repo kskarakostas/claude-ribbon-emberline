@@ -16,8 +16,9 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 
 **The upper row**
 - The current step of the task list, a step count and a rough time left.
-- Running subagents, connector calls and shell commands past 5 seconds.
-- Background work, added when a turn ends.
+- Running subagents as one count, plus connector calls and shell commands past 5 seconds. A subagent's own calls stay inside its count.
+- Background work, added when a turn ends; more than two tasks show as a count with the oldest age.
+- It keeps to one line: what does not fit ends as `+N more`. Where the band is too narrow to share a line with the task step, it takes its own row below it.
 
 **Behind `ⓘ`**
 - Each context category with its tokens and share, counted locally with no API call.

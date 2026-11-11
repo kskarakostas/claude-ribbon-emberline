@@ -105,6 +105,10 @@ const MINI_CELLS = 9
 const PACE_CELLS = 19
 /** The cells of the ` 42m` countdown that Ember's text replaces. */
 const COUNTDOWN_CELLS = 4
+/** What the plan row spends besides the step's own text: marker, bar, count and time left. */
+const STEP_CELLS = 34
+/** The `  │  ` between the plan step and the upper row. */
+const SEP_CELLS = 5
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
 const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
@@ -500,6 +504,20 @@ const noteTool = async ($: EngineInterface, run: Omit<ToolRun, 'startedAt'>): Pr
   }
 }
 
+/**
+ * A spawned subagent's calls stay off the row: its `N agents` part stands for them. A
+ * forked skill runs as a loop with no spawn, so no count holds it and its calls still show.
+ * Never throws: a band that cannot tell must not stop the call.
+ */
+const isCounted = async ($: EngineInterface, agentId: string | undefined): Promise<boolean> => {
+  if (!agentId) return false
+  try {
+    return (await read($, agents)).some(a => a.id === agentId)
+  } catch {
+    return false
+  }
+}
+
 const dropTool = async ($: EngineInterface, id: number): Promise<void> => {
   try {
     await update($, tools, list => list.filter(t => t.id !== id))
@@ -629,7 +647,7 @@ export const register: Register = (on, options) => {
 
   // No .catch: running `next` a second time would run the tool twice. The helpers never throw.
   on('tool.call', async ($, e, next) => {
-    if (!isWatched(e.tool)) return next(e)
+    if (!isWatched(e.tool) || (await isCounted($, e.agentId))) return next(e)
     const id = ++toolSeq
     await noteTool($, { id, name: e.tool })
     try {
@@ -847,11 +865,15 @@ export const register: Register = (on, options) => {
       const d = dots(percent, cells)
       return [<Text key={`${key}-on`} color={colour}>{d.on}</Text>, <Text key={`${key}-off`} color={EMPTY}>{d.off}</Text>]
     }
-    const busy = runningLabel(await read($, tools), crew, await read($, background), now)
-    const busyPart = busy ? <Text key="busy" color={MUTED}>{busy}</Text> : null
-
     const steps = await read($, plan)
     const step = steps && e.props.isWorking ? currentOf(steps) : undefined
+    // One line: alone it spans the band; beside a plan step it takes at most a third, and
+    // leaves the step its 12 cells. Short of that it moves to its own row under the step.
+    const beside = Math.min(Math.floor(columns / 3), columns - STEP_CELLS - SEP_CELLS - 12)
+    const stacks = step !== undefined && beside < 12
+    const busy = runningLabel(await read($, tools), crew, await read($, background), now, step && !stacks ? beside : columns - 2)
+    const busyPart = busy ? <Text key="busy" color={MUTED}>{busy}</Text> : null
+    const busyBeside = busyPart !== null && !stacks
     let planRow = busyPart ? <Box key="plan" flexDirection="row" paddingX={1}>{busyPart}</Box> : null
     if (steps && step) {
       const done = doneOf(steps)
@@ -860,14 +882,22 @@ export const register: Register = (on, options) => {
       planRow = (
         <Box key="plan" flexDirection="row" paddingX={1} alignItems="center">
           <Text color={ACCENT}>▸ </Text>
-          <Text color={TEXT}>{clip(step.content, Math.max(12, columns - 34))} </Text>
+          <Text color={TEXT}>{clip(step.content, Math.max(12, columns - STEP_CELLS - (busyBeside && busy ? busy.length + SEP_CELLS : 0)))} </Text>
           {bar('plan-bar', (done / total) * 100, TIGHT_CELLS, TIGHT_BAR_W, ACCENT, `${done} of ${total} steps done`)}
           <Text color={MUTED}> {done}/{total}</Text>
           {eta ? <Text color={MUTED}> · ~{fmtSpan(eta)} left</Text> : null}
-          {busyPart ? sep('sep-busy') : null}
-          {busyPart}
+          {busyBeside ? sep('sep-busy') : null}
+          {busyBeside ? busyPart : null}
         </Box>
       )
+      if (busyPart && !busyBeside) {
+        planRow = (
+          <Box key="plan-stack" flexDirection="column">
+            {planRow}
+            <Box key="busy-row" flexDirection="row" paddingX={1}>{busyPart}</Box>
+          </Box>
+        )
+      }
     }
 
     if (list.length === 0 && !view) {

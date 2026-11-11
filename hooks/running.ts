@@ -18,7 +18,7 @@ export const isWatched = (tool: string): boolean => tool === 'Bash' || (tool.sta
 const BACKGROUND_CHARS = 32
 
 /** The fields of the engine's background task list that this row reads. */
-type BackgroundTask = { id: string; type: string; description: string; command?: string }
+type BackgroundTask = { id: string; type: string; description: string }
 
 /**
  * The turn-end list onto what the row holds, keeping when each was first seen. A task
@@ -30,19 +30,52 @@ export const backgroundFrom = (tasks: readonly BackgroundTask[], held: readonly 
     .filter(t => t.type !== 'subagent')
     .map(t => ({
       id: t.id,
-      label: t.description || t.command || t.type,
+      // Not the command line: a bare one reads as `F=/tmp/…`. The type says 'shell'.
+      label: t.description || t.type,
       seenAt: held.find(h => h.id === t.id)?.seenAt ?? now,
     }))
 
-const clipLabel = (text: string): string => (text.length > BACKGROUND_CHARS ? `${text.slice(0, BACKGROUND_CHARS - 1)}…` : text)
+const clipTo = (text: string, max: number): string => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text)
+
+const clipLabel = (text: string): string => clipTo(text, BACKGROUND_CHARS)
 
 const shortName = (tool: string): string => (tool.startsWith('mcp__') ? tool.slice(tool.lastIndexOf('__') + 2) : tool)
 
-export const runningLabel = (tools: readonly ToolRun[], agents: readonly AgentRun[], background: readonly BackgroundRun[], now: number): string | null => {
+/** Past this many, background work shows as a count: a fan-out of agents leaves many shells. */
+const BACKGROUND_NAMED = 2
+
+/**
+ * As many parts as fit in `max` characters, then `+N more`. Short of room: a lone part
+ * clips; else the first part clips and keeps the count; else just how many run.
+ */
+const fit = (parts: readonly string[], max: number): string => {
+  for (let shown = parts.length; shown > 0; shown--) {
+    const kept = parts.slice(0, shown)
+    if (shown < parts.length) kept.push(`+${parts.length - shown} more`)
+    const text = kept.join(' · ')
+    if (text.length <= max) return text
+  }
+  if (parts.length === 1) return clipTo(parts[0], max)
+  const more = ` · +${parts.length - 1} more`
+  return max - more.length >= 2 ? clipTo(parts[0], max - more.length) + more : clipTo(`${parts.length} running`, max)
+}
+
+/** One line of at most `max` characters, so the row never wraps over the ribbon. */
+export const runningLabel = (
+  tools: readonly ToolRun[],
+  agents: readonly AgentRun[],
+  background: readonly BackgroundRun[],
+  now: number,
+  max = Infinity,
+): string | null => {
   const live = agents.filter(a => a.status === 'running')
   const oldest = Math.min(...live.map(a => a.startedAt))
   const parts = live.length > 0 ? [`${live.length} agent${live.length > 1 ? 's' : ''} ${fmtSpan(now - oldest)}`] : []
   for (const t of tools) if (now - t.startedAt >= SHOW_AFTER_MS) parts.push(`${shortName(t.name)} ${fmtSpan(now - t.startedAt)}`)
-  for (const b of background) parts.push(`${clipLabel(b.label)} ${fmtSpan(now - b.seenAt)}`)
-  return parts.length > 0 ? parts.join(' · ') : null
+  if (background.length > BACKGROUND_NAMED) {
+    parts.push(`${background.length} background, oldest ${fmtSpan(now - Math.min(...background.map(b => b.seenAt)))}`)
+  } else {
+    for (const b of background) parts.push(`${clipLabel(b.label)} ${fmtSpan(now - b.seenAt)}`)
+  }
+  return parts.length > 0 ? fit(parts, max) : null
 }

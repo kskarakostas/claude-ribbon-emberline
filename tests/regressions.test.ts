@@ -7,6 +7,7 @@ import { cardSvg, ticksSvg } from '../hooks/cache-art'
 import { contextPanelSvg } from '../hooks/context-art'
 
 import { applyPlan, etaMs } from '../hooks/plan'
+import { runningLabel } from '../hooks/running'
 
 const NOW = Date.parse('2098-12-31T22:00:00Z')
 const MIN = 60_000
@@ -439,14 +440,159 @@ test('background work shows on the upper row until a turn ends without it', asyn
   await ui.unmount()
 })
 
-test('a shell with no description shows its command', async ($, on) => {
+test('a shell with no description shows its kind, not its command line', async ($, on) => {
   await start($, on)
   await reply($)
-  await stop($, [{ id: 'b2', type: 'shell', status: 'running', description: '', command: 'npm run dev' }])
+  await stop($, [{ id: 'b2', type: 'shell', status: 'running', description: '', command: 'F=/tmp/claude-1000/x; cd $F && npm run dev' }])
 
   const ui = await band($)
-  expect(await ui.find({ type: 'Text', text: /npm run dev/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^shell 0s$/ }))?.text).toBe('shell 0s')
+  expect(await ui.find({ type: 'Text', text: /npm run dev|\/tmp/ })).toBeUndefined()
   await ui.unmount()
+})
+
+test('three or more background tasks fold into a count with the oldest age', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await stop($, [SHELL])
+  await clock.advance(180_000)
+  await stop($, [SHELL, { ...SHELL, id: 'b2', description: 'Lint' }, { ...SHELL, id: 'b3', description: 'Types' }])
+
+  const ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /^3 background, oldest 3m$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Lint|Types/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a subagent call stays off the upper row; the agent count covers it', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await reply($)
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
+  calls.push(tool($, 'Bash', 'a1'))
+  calls.push(tool($, 'mcp__dd72da63__getJiraIssue', 'a1'))
+  await clock.advance(31_000)
+
+  const ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /^1 agent 31s$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Bash|getJiraIssue/ })).toBeUndefined()
+  await ui.unmount()
+  release()
+  await Promise.all(calls)
+})
+
+test('a forked skill has no agent count, so its slow call still shows', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await reply($)
+  calls.push(tool($, 'Bash', 'fork-1'))
+  await clock.advance(31_000)
+
+  const ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /^Bash 31s$/ })).toBeDefined()
+  await ui.unmount()
+  release()
+  await Promise.all(calls)
+})
+
+test('a row too narrow for one part and +N more still says how many more', () => {
+  const runs = Array.from({ length: 8 }, (_, i) => ({ id: i, name: 'Bash', startedAt: NOW - 31_000 }))
+  const text = runningLabel(runs, [], [], NOW, 16) ?? ''
+  expect(text).toMatch(/ · \+7 more$/)
+  expect(text.length).toBeLessThanOrEqual(16)
+})
+
+test('a lone part too long for the row clips, with no count of nothing more', () => {
+  const text = runningLabel([], [], [{ id: 'b1', label: 'Run the full integration test suite', seenAt: NOW }], NOW, 20) ?? ''
+  expect(text).toBe('Run the full integr…')
+})
+
+test('a row too narrow even for one clipped part and the count says how many run, within its width', () => {
+  const runs = Array.from({ length: 11 }, (_, i) => ({ id: i, name: 'Bash', startedAt: NOW - 31_000 }))
+  expect(runningLabel(runs, [], [], NOW, 12)).toBe('11 running')
+})
+
+test('the upper row stays on one line: what does not fit becomes +N more', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await reply($)
+  for (let i = 0; i < 8; i++) calls.push(tool($, 'Bash'))
+  await clock.advance(31_000)
+
+  // 52 columns leave 50 for the row: four calls and +4 more take 51, so a cap of 52 would show.
+  const ui = await band($, false, 52)
+  const text = (await ui.find({ type: 'Text', text: /^Bash 31s/ }))?.text ?? ''
+  expect(text).toBe('Bash 31s · Bash 31s · Bash 31s · +5 more')
+  await ui.unmount()
+  release()
+  await Promise.all(calls)
+})
+
+test('beside a plan step the upper row takes at most a third of the band', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await say($, { items: ITEMS, scope: 'first_task' })
+  for (let i = 0; i < 8; i++) calls.push(tool($, 'Bash'))
+  await clock.advance(31_000)
+
+  const ui = await band($, true, 120)
+  expect(await ui.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  const text = (await ui.find({ type: 'Text', text: /^Bash 31s/ }))?.text ?? ''
+  expect(text).toMatch(/\+\d more$/)
+  expect(text.length).toBeLessThanOrEqual(40)
+  await ui.unmount()
+  release()
+  await Promise.all(calls)
+})
+
+const LONG = [{ content: 'Settle every open detail the code seams leave, one by one, before the builders start', status: 'in_progress' }, ITEMS[1]]
+
+test('beside the upper row the plan step gives up its room, so the line does not wrap', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await say($, { items: LONG, scope: 'first_task' })
+  for (let i = 0; i < 8; i++) calls.push(tool($, 'Bash'))
+  await clock.advance(31_000)
+
+  const ui = await band($, true, 120)
+  const busy = (await ui.find({ type: 'Text', text: /^Bash 31s/ }))?.text ?? ''
+  const step = (await ui.find({ type: 'Text', text: /^Settle/ }))?.text ?? ''
+  expect(busy).not.toBe('')
+  expect(step.trimEnd().length).toBeLessThanOrEqual(120 - 34 - busy.length - 5)
+  await ui.unmount()
+  release()
+  await Promise.all(calls)
+})
+
+test('too narrow for both, the upper row moves under the plan step instead of wrapping', async ($, on) => {
+  let release = () => {}
+  const hold = new Promise<void>(r => { release = r })
+  const calls: Promise<unknown>[] = []
+  const { clock } = await start($, on, { hold })
+  await say($, { items: ITEMS, scope: 'first_task' })
+  for (let i = 0; i < 8; i++) calls.push(tool($, 'Bash'))
+  await clock.advance(31_000)
+
+  const narrow = await band($, true, 60)
+  expect(await narrow.find({ key: 'busy-row' })).toBeDefined()
+  expect((await narrow.find({ type: 'Text', text: /^Bash 31s/ }))?.text).toMatch(/\+\d more$/)
+  expect(await narrow.find({ type: 'Text', text: /Read the code/ })).toBeDefined()
+  await narrow.unmount()
+  const wide = await band($, true, 120)
+  expect(await wide.find({ key: 'busy-row' })).toBeUndefined()
+  await wide.unmount()
+  release()
+  await Promise.all(calls)
 })
 
 test('the ribbon shows the session cost when there is room', async ($, on) => {
