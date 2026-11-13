@@ -170,6 +170,24 @@ const warnMinutesOf = (value: unknown): number | null => {
 
 const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text)
 
+/** How long the opening prompt may run in a notification before it is clipped. */
+const OPENING_MAX = 40
+
+/**
+ * Names the session a notification speaks for: its folder, and its opening prompt, which is what
+ * the app titles a session from, so two sessions in one folder read apart. The API offers no title.
+ */
+const whereOf = async ($: EngineInterface): Promise<string> => {
+  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
+  const messages = await $.session.messages().catch(() => [])
+  // Skip what the app writes in the user's name: commands, their output, a compaction summary.
+  const opening = (Array.isArray(messages) ? messages : [])
+    .filter(m => m.role === 'user')
+    .map(m => (m.text ?? '').replace(/\s+/g, ' ').trim())
+    .find(t => t !== '' && !t.startsWith('<') && !t.startsWith('/') && !t.startsWith('This session is being continued'))
+  return opening ? `${project} · “${clip(opening, OPENING_MAX)}”` : project
+}
+
 const togglePane = async ($: EngineInterface): Promise<void> => {
   if ((await $.ui.panes()).some(p => p.id === PANE)) await $.ui.close({ id: PANE })
   else await $.ui.open({ id: PANE, title: PANE_TITLE })
@@ -184,8 +202,8 @@ const warnIfDue = async ($: EngineInterface, warnMin: number | null): Promise<vo
   const leftMs = ttlMs - ((await $.clock.now()) - c.lastAt)
   if (leftMs <= 0 || leftMs > warnMin * 60_000 || (await read($, warnedFor)) === c.lastAt) return
   await update($, warnedFor, () => c.lastAt)
-  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
-  let text = `${project}: ${Math.round(c.tokens / 1000)}k tokens go cold in ${Math.ceil(leftMs / 60_000)}m`
+  const where = await whereOf($)
+  let text = `${where}: ${Math.round(c.tokens / 1000)}k tokens go cold in ${Math.ceil(leftMs / 60_000)}m`
   // With keep-warm off, weigh the re-cache against what 2h of pings from here would cost.
   const recache = nextCost(c.model, 'cold', c.tokens, ttlMs / 60_000)
   const perPing = nextCost(c.model, 'warm', c.tokens)
@@ -451,8 +469,8 @@ const endIfDue = async ($: EngineInterface, warnMin: number | null): Promise<voi
   await update($, endedFor, () => end)
   const ttlMs = await read($, ttl)
   if (c.isCold || now - c.lastAt >= ttlMs) return // already cold: nothing left to say
-  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
-  const text = `${project}: Ember ended. ${tok(c.tokens)} tokens go cold about ${fmtClock(c.lastAt + ttlMs)}`
+  const where = await whereOf($)
+  const text = `${where}: Ember ended. ${tok(c.tokens)} tokens go cold about ${fmtClock(c.lastAt + ttlMs)}`
   const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
   if (!sent?.isSent) $.ui.toast(text)
 }
@@ -489,8 +507,8 @@ const missedIfDue = async ($: EngineInterface, warnMin: number | null, isQuiet: 
   const coldAt = c.lastAt + ttlMs
   // Nor an "Ember ended" for a window that ends before this cache would go cold anyway.
   if (end <= coldAt) await update($, endedFor, () => end)
-  const project = (await $.session.cwd()).split('/').filter(Boolean).pop() ?? 'session'
-  const text = `${project}: Ember missed its ping, likely while the computer slept. ${tok(c.tokens)} tokens ${now < coldAt ? 'go cold about' : 'went cold at'} ${fmtClock(coldAt)}`
+  const where = await whereOf($)
+  const text = `${where}: Ember missed its ping, likely while the computer slept. ${tok(c.tokens)} tokens ${now < coldAt ? 'go cold about' : 'went cold at'} ${fmtClock(coldAt)}`
   const sent = await $.ui.notify(text, { title: 'Keep-warm' }).catch(() => null)
   if (!sent?.isSent) $.ui.toast(text)
 }
