@@ -6,8 +6,8 @@ import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
-import { runOutAt } from './pace'
-import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
+import { noteReading, runOutAt } from './pace'
+import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceLog, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
   cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usd,
@@ -58,6 +58,9 @@ const ledger = atom({ plugin: 'emberline', key: 'ledger' } as const, null as Led
 const warm = atom({ plugin: 'emberline', key: 'warm' } as const, { capMs: null, lastPromptAt: 0 } as Warm)
 /** How long this session's cache lives, as the engine last reported it on a model switch or resume. */
 const ttl = atom({ plugin: 'emberline', key: 'ttl' } as const, TTL_MS)
+/** Recent usage readings for the forecast, mirrored from `$.store`, which keeps them across sessions. */
+const pace = atom({ plugin: 'emberline', key: 'pace' } as const, {} as PaceLog)
+const PACE_LOG = 'paceLog'
 
 const PING_PROMPT = 'Keep-alive ping, not a task. Reply with only the word: ok'
 /** A ping must read at least this share of the context, or the cache was not there. */
@@ -101,8 +104,12 @@ const HIT_CELLS = 11
 const FILL_CELLS = 14
 const COST_CELLS = 10
 const MINI_CELLS = 9
-/** What ` · out in ~13h 20m` spends after a window, when its forecast shows. */
-const PACE_CELLS = 19
+/** What ` · out ~13h 20m` spends after a window, when its forecast shows. */
+const PACE_CELLS = 15
+/** The cache's stacked block at its widest, `89% hit · 129k · 13%`, with its margin. */
+const BLOCK_CELLS = 22
+/** A stacked window block's narrowest, set by its name and bar, with its margin. */
+const STACK_CELLS = 19
 /** The cells of the ` 42m` countdown that Ember's text replaces. */
 const COUNTDOWN_CELLS = 4
 /** What the plan row spends besides the step's own text: marker, bar, count and time left. */
@@ -566,6 +573,21 @@ const recordSkip = async ($: EngineInterface, at: number): Promise<void> => {
 const noteWindows = async ($: EngineInterface, list: readonly Window[]): Promise<void> => {
   const cleaned = clean(list)
   await update($, windows, () => cleaned)
+  // Every session adds to the one log, so the recent pace reaches back past this session's start.
+  // A store that fails leaves the forecast on the average since the reset, nothing worse.
+  try {
+    const now = await $.clock.now()
+    const stored = ((await $.store.get(PACE_LOG)) ?? {}) as PaceLog
+    let log = stored
+    for (const w of cleaned) {
+      const resetsAt = w.resetsAt ? Date.parse(w.resetsAt) : NaN
+      log = noteReading(log, w.kind, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt, now)
+    }
+    if (log !== stored) await $.store.set(PACE_LOG, log)
+    await update($, pace, () => log)
+  } catch {
+    // The next reading tries again.
+  }
 }
 
 const pull = async ($: EngineInterface): Promise<void> => {
@@ -937,10 +959,11 @@ export const register: Register = (on, options) => {
     }
 
 
-    // When a window runs out at its pace since it reset, only if that comes before it resets.
+    // When a window runs out at the faster of its pace since the reset and its recent pace, only if that comes before it resets.
+    const readings = await read($, pace)
     const outOf = (w: Window): string | null => {
       const resetsAt = w.resetsAt ? Date.parse(w.resetsAt) : NaN
-      const at = runOutAt(w.kind, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt, now)
+      const at = runOutAt(w.kind, w.percentUsed, Number.isNaN(resetsAt) ? null : resetsAt, now, readings[w.kind]?.samples ?? [])
       return at === null ? null : fmtIdle(at - now)
     }
     const forecasts = list.filter(w => outOf(w) !== null).length
@@ -975,10 +998,19 @@ export const register: Register = (on, options) => {
           <Text color={p.col} bold> {p.left}% left</Text>
           {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
           {p.reset ? <Text color={MUTED}> · {p.reset}</Text> : null}
-          {p.out ? <Text color={WARN}>{` · out in ~${p.out}`}</Text> : null}
+          {p.out ? <Text color={WARN}>{` · out ~${p.out}`}</Text> : null}
         </Box>
       )
     }
+
+    // A stacked forecast joins the share left, so the block keeps its three lines, where the row has room for the wider blocks.
+    const leftCells = (w: Window) => {
+      const p = parts(w)
+      return `${p.left}% left`.length + (p.left < LOW_AT ? 4 : 0) + (p.out ? ` · out ~${p.out}`.length : 0) + 3
+    }
+    const rowCells = list.reduce((n, w) => n + Math.max(STACK_CELLS, leftCells(w)), 0)
+    const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + (agentsButton ? AGENTS_CELLS : 0)
+    const isOutBeside = rowCells + besideCells <= columns
 
     const stacked = (w: Window, i: number) => {
       const p = parts(w)
@@ -991,9 +1023,10 @@ export const register: Register = (on, options) => {
           <Box flexDirection="row">
             <Text color={p.col} bold>{p.left}% left</Text>
             {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
+            {p.out && isOutBeside ? <Text color={WARN}>{` · out ~${p.out}`}</Text> : null}
           </Box>
           {p.reset ? <Text color={MUTED}>resets {p.reset}</Text> : null}
-          {p.out ? <Text color={WARN}>{`out in ~${p.out}`}</Text> : null}
+          {p.out && !isOutBeside ? <Text color={WARN}>{`out ~${p.out}`}</Text> : null}
         </Box>
       )
     }
