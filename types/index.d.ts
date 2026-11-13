@@ -67,6 +67,15 @@ export type PingRecord = { at: number; served: number; tokens: number; isServed:
  */
 export type Ledger = { count: number; costUsd: number; lastAt: number; lastServed: number; isFloor: boolean }
 
+/** One usage reading: when, and the share of the window used (0 to 100). */
+export type PaceSample = { at: number; used: number }
+
+/**
+ * Recent usage readings by window kind, kept across sessions in `$.store` under `paceLog`: the
+ * reset they belong to (clock milliseconds) and the readings, oldest first.
+ */
+export type PaceLog = Record<string, { resetsAt: number; samples: PaceSample[] }>
+
 declare module 'claude-code' {
   interface PluginState {
     'emberline': {
@@ -86,6 +95,7 @@ declare module 'claude-code' {
       seenFor: number
       autoOff: boolean
       hits: number[]
+      pace: PaceLog
     }
   }
 }

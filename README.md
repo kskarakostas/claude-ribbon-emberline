@@ -9,7 +9,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 ## What it shows
 
 **The ribbon**
-- Each usage limit as a tick bar that fills as you use it, beside what's left and when it resets. When the average pace since the limit last reset would use it up before the next reset, an amber `out in ~2h 30m` says when. It waits until a tenth of the window has passed (about 17 hours of a week), so one busy stretch does not swing it.
+- Each usage limit as a tick bar that fills as you use it, beside what's left and when it resets. When your pace would use it up before the next reset, an amber `out ~2h 30m` says when. The pace is the faster of two: the average since the limit last reset, and the last 24 hours (the last hour for the 5-hour limit), read from usage readings every session keeps. A quiet day already behind you no longer stretches the week's forecast, and a quiet morning does not hide a busy week. It waits until a tenth of the window has passed (about 17 hours of a week), so one busy stretch does not swing it.
 - Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
 - Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead (`ember 1h 50m`).
 - The session's running cost at list price, when the row has room.
