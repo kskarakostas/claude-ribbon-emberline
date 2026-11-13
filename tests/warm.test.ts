@@ -559,6 +559,21 @@ test('with keep-warm off, the expiry warning weighs a re-cache against keeping i
   expect(sent).toEqual(['demo: 300k tokens go cold in 10m. Re-cache $2.40; Ember 2h would keep it warm for about $0.18.'])
 })
 
+test('the expiry warning names the session by its opening prompt, past commands and their output', async ($, on) => {
+  const user = (text: string) => ({ role: 'user', text, toolUses: [] })
+  on('session.messages', () => ({ value: [
+    user('<command-name>/model</command-name>'),
+    user('/keep-warm 2h'),
+    user('  Refactor the billing\n  export so it streams rows instead of buffering them'),
+    { role: 'assistant', text: 'On it.', toolUses: [] },
+    user('and add a test'),
+  ] }) as never)
+  const { clock, sent } = await start($, on)
+  await reply($)
+  await clock.advance(50 * MIN)
+  expect(sent[0]).toBe('demo · “Refactor the billing export so it strea…”: 300k tokens go cold in 10m. Re-cache $2.40; Ember 2h would keep it warm for about $0.18.')
+})
+
 test('too late for a ping, the expiry warning makes no offer', async ($, on) => {
   const { clock, sent } = await start($, on)
   // Back after 58.5 idle minutes: keep-warm could no longer ping in time.

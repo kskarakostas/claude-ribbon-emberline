@@ -31,7 +31,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 
 **On request**
 - An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` before any has run) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
-- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would.
+- A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would. Each notification starts with the session's folder and its opening prompt, as in `noesis · “Refactor the billing export so it strea…”: 508k tokens go cold in 10m`, so two sessions in one folder read apart.
 
 Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no card), with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
 
@@ -68,6 +68,14 @@ At the prompt of a terminal session:
 ```
 
 Answer `y` to add the marketplace, then pick a scope. In the desktop app: click + next to the prompt box, then Plugins, Add marketplace with `kskarakostas/claude-ribbon-emberline`, then Add plugin.
+
+An installed copy is a snapshot: a new version reaches it only when the marketplace is updated. To have that happen on its own, open `/plugin`, then Marketplaces, `claude-ribbon-emberline`, and pick Enable auto-update if it shows. To update by hand:
+
+```
+/plugin marketplace update claude-ribbon-emberline
+```
+
+Then update `emberline` from `/plugin` and start a new session, or run `/reload-plugins`. `/plugin` shows the installed version.
 
 The task-step row reads the desktop app's task list, so it shows there only. Costs are list-price estimates, not a bill.
 
