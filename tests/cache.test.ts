@@ -1,4 +1,6 @@
+import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 const NOW = Date.parse('2098-12-31T22:00:00Z')
 const WINDOWS = [
@@ -61,6 +63,39 @@ test('a cold cache opens the card with the re-cache price, and Hide folds it to 
   await band.unmount()
 })
 
+/** Starts a desktop session on the two windows, resumed with the cache warm or cold. */
+const resumed = async ($: Engine, on: On, idle: number) => {
+  mock.store(on)
+  mock.clock(on, { now: NOW })
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000000 }, rateLimits: WINDOWS } }))
+  on('classic.SessionStart', () => ({}))
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: idle, context_tokens: 770000, model: 'claude-opus-5-5' })
+}
+
+test('on the desktop a row that would pass the band stacks, forecast or not', async ($, on) => {
+  // The two windows, the fill, the warm cache and the picker come to about 104 cells at the measured widths.
+  await resumed($, on, WARM_IDLE)
+  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 100 } })
+  expect(await short.find({ key: 'block' })).toBeDefined()
+  await short.unmount()
+  const room = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 108 } })
+  expect(await room.find({ key: 'usage' })).toBeDefined()
+  await room.unmount()
+})
+
+test('an open card leaves the cache out of the row, so the row needs less room than folded', async ($, on) => {
+  // Cold, the card opens and the row carries no badge or idle time: about 87 cells, against about 112 folded.
+  await resumed($, on, COLD_IDLE)
+  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 95 } })
+  expect(await band.find({ key: 'card' })).toBeDefined()
+  expect(await band.find({ key: 'usage' })).toBeDefined()
+  await band.press({ key: 'cache-fold' })
+  expect(await band.find({ key: 'block' })).toBeDefined()
+  await band.unmount()
+})
+
 test('squeezed, the folded cache stacks as a third block, then takes its own row', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: NOW })
@@ -71,9 +106,17 @@ test('squeezed, the folded cache stacks as a third block, then takes its own row
   await $.classic.SessionStart({ source: 'resume', seconds_since_last_response: WARM_IDLE, context_tokens: 770000, model: 'claude-opus-5-5' })
 
   const half = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 53 } })
-  expect(await half.find({ key: 'block' })).toBeDefined()
+  const block = await half.find({ key: 'block' })
+  expect(block).toBeDefined()
   expect(await half.find({ text: '42m' })).toBeDefined()
   expect(await half.find({ text: '$0.15' })).toBeDefined()
+  // Three lines, as a window block keeps: the badge with its minutes, the next price, the hit and fill.
+  type Drawn = string | { children?: Drawn[] }
+  const shown = (d: Drawn | undefined): string => (d === undefined ? '' : typeof d === 'string' ? d : (d.children ?? []).map(shown).join(''))
+  const lines = (block?.children ?? []) as Drawn[]
+  expect(lines.length).toBe(3)
+  expect(shown(lines[0])).toContain('42m')
+  expect(shown(lines[1])).toContain('$0.15')
   await half.unmount()
 
   const narrow = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 33 } })

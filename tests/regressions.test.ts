@@ -387,7 +387,8 @@ test('a wide row short of room keeps tokens and drops the hit share first', asyn
   await start($, on)
   await reply($)
 
-  const ui = await band($, false, 90)
+  // The row needs about 73 cells at the measured widths, its hit share about 8 more.
+  const ui = await band($, false, 80)
   expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
   await ui.unmount()
@@ -397,7 +398,8 @@ test('a wide row without room keeps the tokens and drops the extras', async ($, 
   await start($, on, { rateLimits: TWO, categories: CATEGORIES })
   await reply($)
 
-  const ui = await band($, false, 100)
+  // Two windows make the row about 109 cells; the hit share would take it past 117.
+  const ui = await band($, false, 112)
   expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
   expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(false)
@@ -503,7 +505,7 @@ test('the ribbon draws the context mix when there is room, and not when short of
     return found
   }
   expect(await mix(140)).toBe(true)
-  expect(await mix(100)).toBe(false)
+  expect(await mix(88)).toBe(false) // the mix needs about 91 cells, after the hit share
 })
 
 test('a plan update moves the row when the model asks, not when the tool runs', async ($, on) => {
@@ -544,7 +546,7 @@ test('the mix fits before the cost does', async ($, on) => {
   await start($, on, { cost: 18.2, categories: CATEGORIES })
   await reply($)
 
-  const ui = await band($, false, 118)
+  const ui = await band($, false, 95) // the mix fits from about 91 cells, the cost from about 99
   expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(true)
   expect(await ui.find({ type: 'Text', text: /\$18/ })).toBeUndefined()
   await ui.unmount()
@@ -739,7 +741,7 @@ test('a short row drops the cost before anything else', async ($, on) => {
   await start($, on, { cost: 18.2 })
   await reply($)
 
-  const ui = await band($, false, 106)
+  const ui = await band($, false, 95) // the cost needs about 99 cells
   expect(await ui.find({ type: 'Text', text: /\$18/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeDefined()
   await ui.unmount()

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
-import { contextMiniSvg, contextPanelSvg } from './context-art'
+import { contextMiniSvg, contextPanelSvg, MINI_W } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
 import { noteReading, runOutAt } from './pace'
@@ -118,6 +118,20 @@ const PACE_CELLS = 15
 const BLOCK_CELLS = 22
 /** A stacked window block's narrowest, set by its name and bar, with its margin. */
 const STACK_CELLS = 19
+// The widths a drawn surface (the desktop and mobile apps, VS Code) gives the wide row, measured on the desktop app only
+// from two screenshots of a band reported as 95 cells: a cell is 7.85 CSS pixels, and its proportional
+// text runs 0.82 cells a character. A sum of these came within 2% of the measured row, on the generous side.
+// shortcut: measured for the desktop's own font at one zoom; measure again if a wide row overflows there.
+const DRAWN_PX = 7.85
+const DRAWN_TEXT = 0.82
+/** The `  │  ` between the row's parts. */
+const DRAWN_SEP = 3.2
+/** The Ember picker less its value's text: label, gap, the box with its chevron, and the margin after it. */
+const DRAWN_PICKER = 12.2
+/** A button less its label's text: its padding and the margin after it. */
+const DRAWN_BUTTON = 4.4
+/** The `ⓘ` that ends the row, with the gap before it. */
+const DRAWN_FOLD = 3
 /** The cells of the ` 42m` countdown that Ember's text replaces. */
 const COUNTDOWN_CELLS = 4
 /** What the plan row spends besides the step's own text: marker, bar, count and time left. */
@@ -913,12 +927,13 @@ export const register: Register = (on, options) => {
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
     // Once any subagent has run the button stays, dimmed when none runs, so the panel's costs stay one press away.
+    const agentsLabel = runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents'
     const agentsButton =
       crew.length > 0 ? (
         <Box key="agents" flexShrink={0} marginRight={1}>
           <Button
             key="agents-toggle"
-            label={runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents'}
+            label={agentsLabel}
             dimColor={runningAgents === 0}
             onPress={() => togglePane($)}
           />
@@ -995,13 +1010,6 @@ export const register: Register = (on, options) => {
       return at === null ? null : fmtIdle(at - now)
     }
     const forecasts = list.filter(w => outOf(w) !== null).length
-    // Forecasts widen the row: where one shows and the row would pass the band, the cache stacks instead.
-    // shortcut: the cell estimates run conservative, so this stacks somewhat early; measure if it bites.
-    const wideNeeds =
-      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? AGENTS_CELLS : 0) + forecasts * PACE_CELLS
-    const kind = kindOf(columns) === 'wide' && view && forecasts > 0 && wideNeeds > columns ? 'stacked' : kindOf(columns)
-    const isWide = kind === 'wide'
-    const cells = kind === 'tight' ? TIGHT_CELLS : CELLS
 
     const parts = (w: Window) => {
       const left = Math.max(0, Math.round((100 - w.percentUsed) * 10) / 10)
@@ -1014,6 +1022,53 @@ export const register: Register = (on, options) => {
         out: outOf(w),
       }
     }
+
+    // What the cache part of the row shows, needed first: its text sets part of the row's width.
+    const held = await read($, warm)
+    const { capMs, lastPromptAt, untilAt } = held
+    // While Ember holds, each ping restarts the cache hour, so that countdown never
+    // reaches zero: show how long Ember has left. Past the cap, the hour is true again.
+    // Only while a ping can still come: not mid-turn, not too late, not a cache it cannot hold.
+    const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn, untilAt }
+    const emberMs = view && view.mode !== 'cold' && facts && canHold(facts, ttlMs) ? emberLeftMs(hold) : 0
+    const ember = emberMs > 0 ? `ember ${fmtIdle(emberMs)}` : null
+    const capValue = capMs === null ? 'off' : windowLabel(held)
+    const pickLabel = (value: string) => (value === 'off' ? 'Off' : value.startsWith('until ') ? `Until ${value.slice(6)}` : value)
+    const minsLeft = view ? Math.max(0, view.ttlMin - view.idleMin) : 0
+    const myCost = view ? nextCost(view.model, view.mode, view.tokens, view.ttlMin) : null
+    const fillLabel = view && view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
+    const windowText = (w: Window) => {
+      const p = parts(w)
+      return ` ${p.left}% left${p.left < LOW_AT ? ' LOW' : ''}${p.reset ? ` · ${p.reset}` : ''}${p.out ? ` · out ~${p.out}` : ''}`
+    }
+
+    // Where the wide row would pass the band, the cache stacks instead. A drawn surface sums what the row
+    // shows at its measured widths, hit share left out (it shows only with room to spare). The terminal
+    // keeps its estimates, and stacks only for forecasts.
+    const textW = (text: string) => text.length * DRAWN_TEXT
+    const stored = await read($, fold)
+    // Folding needs the card, and the card is a drawing: the terminal stays folded.
+    const open = Svg !== null && view !== null && view !== undefined && (stored && stored.mode === view.mode ? stored.open : view.mode === 'cold')
+    const drawnNeeds = !view
+      ? 0
+      : 2 +
+        (list.length === 0 ? textW('waiting for the first reply') + 3 : 0) +
+        list.reduce((n, w, i) => n + (i > 0 ? DRAWN_SEP : 0) + textW(`${parts(w).name} `) + BAR_W / DRAWN_PX + textW(windowText(w)), 0) +
+        (fillLabel ? DRAWN_SEP + textW(fillLabel) : 0) +
+        // An open card shows the cache, and the row leaves it out.
+        (open
+          ? 0
+          : DRAWN_SEP + (ROBO_SIZE + chipSvg(view.mode).w) / DRAWN_PX + textW(' ') +
+            textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`)) +
+        (Select ? DRAWN_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
+        (agentsButton ? DRAWN_BUTTON + textW(agentsLabel) : 0) +
+        DRAWN_FOLD
+    const wideNeeds =
+      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? AGENTS_CELLS : 0) + forecasts * PACE_CELLS
+    const tooWide = Svg ? drawnNeeds > columns : forecasts > 0 && wideNeeds > columns
+    const kind = kindOf(columns) === 'wide' && view && tooWide ? 'stacked' : kindOf(columns)
+    const isWide = kind === 'wide'
+    const cells = kind === 'tight' ? TIGHT_CELLS : CELLS
 
     // Wide: every window on one row. Narrow: each window is a block of three
     // lines (name and dots, percent left, reset time) so nothing wraps or clips.
@@ -1080,29 +1135,15 @@ export const register: Register = (on, options) => {
     const mode = view.mode
     const cold = mode === 'cold'
     const hue = HUE[mode]
-    const myCost = nextCost(view.model, mode, view.tokens, view.ttlMin)
     const settings = await settingsOf($, options)
     const warnMin = warnMinutesOf(settings.warn)
-    const minsLeft = Math.max(0, view.ttlMin - view.idleMin)
     const hitValue = cold ? null : (facts?.hit ?? null)
     const hitLabel = hitValue === null ? null : `${hitValue}% hit`
     const isHitLow = hitValue !== null && hitValue < HIT_LOW_AT
-    const fillLabel = view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
-    // shortcut: these widths are estimates in cells; measure them if a wide row still overflows.
-    const held = await read($, warm)
-    const { capMs, lastPromptAt, untilAt } = held
-    // While Ember holds, each ping restarts the cache hour, so that countdown never
-    // reaches zero: show how long Ember has left. Past the cap, the hour is true again.
-    // Only while a ping can still come: not mid-turn, not too late, not a cache it cannot hold.
-    const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn, untilAt }
-    const emberMs = !cold && facts && canHold(facts, ttlMs) ? emberLeftMs(hold) : 0
-    const ember = emberMs > 0 ? `ember ${fmtIdle(emberMs)}` : null
     const emberView: EmberView | null =
       ember && capMs !== null ? { left: fmtIdle(emberMs), spent: 1 - emberMs / capMs, coldAt: fmtClock(coldAtMs(hold)) } : null
-    const capValue = capMs === null ? 'off' : windowLabel(held)
     const offered = [...new Set([...WARM_PICKS, ...untilChoices(now, UNTIL_PICKS).map(t => `until ${fmtClock(t)}`)])]
     const picks = offered.includes(capValue) ? offered : [...offered, capValue]
-    const pickLabel = (value: string) => (value === 'off' ? 'Off' : value.startsWith('until ') ? `Until ${value.slice(6)}` : value)
     const warmButton = (
       <Box key="warm" flexShrink={0} marginRight={1}>
         {Select ? (
@@ -1124,15 +1165,17 @@ export const register: Register = (on, options) => {
       </Box>
     )
     // The tokens always show; only what is left after them is spare.
-    const spare = columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
-    const showHit = kind !== 'wide' || spare >= HIT_CELLS
+    const spare = Svg
+      ? columns - drawnNeeds
+      : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
+    const hitCells = Svg ? (hitLabel ? textW(` · ${hitLabel}`) : 0) : HIT_CELLS
+    const miniCells = Svg ? textW(' ') + MINI_W / DRAWN_PX : MINI_CELLS
+    const costText = facts?.costUsd !== undefined ? ` · ${usd(facts.costUsd)}` : null
+    const showHit = kind !== 'wide' || spare >= hitCells
     const composition = await read($, mix)
-    const showMini = kind === 'wide' && spare >= HIT_CELLS + MINI_CELLS
+    const showMini = kind === 'wide' && spare >= hitCells + miniCells
     const mini = Svg && composition && showMini ? contextMiniSvg(composition) : null
-    const costLabel = showMini && facts?.costUsd !== undefined && spare >= HIT_CELLS + MINI_CELLS + COST_CELLS ? ` · ${usd(facts.costUsd)}` : null
-    const stored = await read($, fold)
-    // Folding needs the card, and the card is a drawing: the terminal stays folded.
-    const open = Svg !== null && (stored && stored.mode === mode ? stored.open : cold)
+    const costLabel = showMini && costText !== null && spare >= hitCells + miniCells + (Svg ? textW(costText) : COST_CELLS) ? costText : null
     const toggle = () =>
       update($, fold, f => ({ mode, open: !(f && f.mode === mode ? f.open : mode === 'cold') }))
 
@@ -1200,14 +1243,16 @@ export const register: Register = (on, options) => {
         </Box>
       )
     } else if (kind === 'stacked') {
-      // The cache becomes a third stacked block, the same shape as 7D and 5H.
+      // The cache becomes a third stacked block, three lines like 7D and 5H: the badge with its minutes as on the wide row.
       rows = (
         <Box key="row" flexDirection="row" paddingX={1}>
           {usage}
           {open ? null : (
             <Box key="block" flexDirection="column" flexShrink={0} marginRight={2}>
-              <Box flexDirection="row" alignItems="center">{badge}</Box>
-              <Text color={hue} bold>{cold ? `${view.idle} idle` : (ember ?? `${minsLeft}m`)}</Text>
+              <Box flexDirection="row" alignItems="center">
+                {badge}
+                <Text color={hue} bold>{` ${cold ? `${view.idle} idle` : (ember ?? `${minsLeft}m`)}`}</Text>
+              </Box>
               {myCost !== null ? (
                 <Box flexDirection="row">
                   <Text color={TEXT} bold>{usd(myCost)}</Text>

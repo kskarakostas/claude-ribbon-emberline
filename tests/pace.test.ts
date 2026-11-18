@@ -150,6 +150,19 @@ test('the forecast follows each new reading the session takes', async ($, on) =>
   await band.unmount()
 })
 
+test('the wide row keeps a forecast wherever its measured width fits, and stacks below that', async ($, on) => {
+  // Measured on the desktop app, this row needs about 88 cells: the window with its forecast, the fill, the badge, the picker.
+  await start($, on, [{ kind: 'seven_day', percentUsed: 30, resetsAt: iso(NOW + 5 * DAY) }])
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 60, context_tokens: 300000, model: 'claude-opus-5-5' })
+  const fits = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 95 } })
+  expect(await fits.find({ key: 'block' })).toBeUndefined()
+  expect(await fits.find({ type: 'Text', text: /out ~4d 16h/ })).toBeDefined()
+  await fits.unmount()
+  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 86 } })
+  expect(await short.find({ key: 'block' })).toBeDefined()
+  await short.unmount()
+})
+
 test('when two forecasts would not fit the wide row, the ribbon stacks', async ($, on) => {
   await start($, on, [
     { kind: 'five_hour', percentUsed: 50, resetsAt: iso(NOW + 3 * HOUR) },
@@ -161,7 +174,8 @@ test('when two forecasts would not fit the wide row, the ribbon stacks', async (
   const wide = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 200 } })
   expect(await wide.find({ key: 'block' })).toBeUndefined()
   await wide.unmount()
-  const narrower = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 140 } })
+  // Both forecasts make the wide row about 131 cells at the measured widths.
+  const narrower = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 125 } })
   expect(await narrower.find({ key: 'block' })).toBeDefined()
   expect(await narrower.find({ type: 'Text', text: /out ~2h 0m/ })).toBeDefined()
   await narrower.unmount()

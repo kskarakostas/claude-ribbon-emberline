@@ -66,7 +66,7 @@ export const contextPanelSvg = (mix: ContextMix): { source: string; w: number; h
   return { source: svgDoc(W, h, g, true), w: W, h, alt: `Context panel: ${listOf(mix)}` }
 }
 
-const MINI_W = 72
+export const MINI_W = 72
 const MINI_H = 8
 
 /** The ribbon's small bar: what the used context is made of, whole bar being the context in use. */

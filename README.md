@@ -13,6 +13,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
 - Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead (`ember 1h 50m`).
 - The session's running cost at list price, when the row has room.
+- All of it on one row where it fits, judged in the app from widths measured on the desktop's own drawing. Short of room the row drops the cost, then the colour bar, then the hit share; short of more, each limit and the cache stack as blocks, three lines each where the band allows.
 
 **The upper row**
 - The current step of the task list, a step count and a rough time left. Like the app's list, it lasts across turns until the list is wrapped up, replaced or cleared with `/clear`, or you type a new prompt while nothing runs; between turns it shows while subagents or background work run.
@@ -26,7 +27,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.5.2` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.5.3` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 
