@@ -151,16 +151,40 @@ test('the forecast follows each new reading the session takes', async ($, on) =>
 })
 
 test('the wide row keeps a forecast wherever its measured width fits, and stacks below that', async ($, on) => {
-  // Measured on the desktop app, this row needs about 88 cells: the window with its forecast, the fill, the badge, the picker.
+  // Measured on the desktop app, this row needs about 88 cells: the window with its forecast, the fill, the badge, the picker; about 82 tightened.
   await start($, on, [{ kind: 'seven_day', percentUsed: 30, resetsAt: iso(NOW + 5 * DAY) }])
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 60, context_tokens: 300000, model: 'claude-opus-5-5' })
   const fits = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 95 } })
   expect(await fits.find({ key: 'block' })).toBeUndefined()
   expect(await fits.find({ type: 'Text', text: /out ~4d 16h/ })).toBeDefined()
   await fits.unmount()
-  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 86 } })
+  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 80 } })
   expect(await short.find({ key: 'block' })).toBeDefined()
   await short.unmount()
+})
+
+test('short of room for the full row, the row tightens before it stacks: a shorter bar, no dot before the reset, A for Agents', async ($, on) => {
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }) as never)
+  await start($, on, [{ kind: 'seven_day', percentUsed: 30, resetsAt: iso(NOW + 5 * DAY) }])
+  await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 60, context_tokens: 300000, model: 'claude-opus-5-5' })
+  await $.agent.spawn({ tool_use_id: 't1', prompt: 'p', description: 'Check', subagentType: 'general-purpose' } as never)
+  const at = async (bodyColumns: number) => {
+    const ui = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns } })
+    const bar = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))
+    const seen = {
+      isRow: (await ui.find({ key: 'usage' })) !== undefined,
+      agents: (await ui.find({ key: 'agents-toggle' }))?.text,
+      named: (await ui.find({ key: 'agents-toggle' }))?.props.label, // what a screen reader announces
+      bar: bar?.props.width,
+      dot: (await ui.find({ type: 'Text', text: /^ · 5d 0h$/ })) !== undefined,
+    }
+    await ui.unmount()
+    return seen
+  }
+  // The full row needs about 99 cells with the running agent, the tight one about 88.
+  expect(await at(110)).toEqual({ isRow: true, agents: 'Agents 1', named: 'Agents 1', bar: 100, dot: true })
+  expect(await at(95)).toEqual({ isRow: true, agents: 'A1', named: 'Agents 1', bar: 60, dot: false })
+  expect((await at(86)).isRow).toBe(false)
 })
 
 test('when two forecasts would not fit the wide row, the ribbon stacks', async ($, on) => {
@@ -174,8 +198,8 @@ test('when two forecasts would not fit the wide row, the ribbon stacks', async (
   const wide = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 200 } })
   expect(await wide.find({ key: 'block' })).toBeUndefined()
   await wide.unmount()
-  // Both forecasts make the wide row about 131 cells at the measured widths.
-  const narrower = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 125 } })
+  // Both forecasts make the wide row about 131 cells at the measured widths, about 118 tightened.
+  const narrower = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 115 } })
   expect(await narrower.find({ key: 'block' })).toBeDefined()
   expect(await narrower.find({ type: 'Text', text: /out ~2h 0m/ })).toBeDefined()
   await narrower.unmount()

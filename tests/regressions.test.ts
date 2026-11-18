@@ -407,6 +407,19 @@ test('a wide row without room keeps the tokens and drops the extras', async ($, 
   await ui.unmount()
 })
 
+test('a tightened row shows no hit share, colour bar or cost: those go before the row tightens', async ($, on) => {
+  await start($, on, { rateLimits: TWO, categories: CATEGORIES, cost: 18.2 })
+  await reply($)
+
+  // The full row needs about 109 cells, tightened about 96; what tightening saves is not room for extras.
+  const ui = await band($, false, 106)
+  expect((await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))?.props.width).toBe(60)
+  expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(false)
+  expect(await ui.find({ type: 'Text', text: /\$18/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the estimate holds the steps still ahead once a step overruns', async () => {
   let p = applyPlan(null, { items: [...ITEMS, { content: 'Third', status: 'pending' }] }, 0)
   p = applyPlan(p, { advance: true }, 60_000)

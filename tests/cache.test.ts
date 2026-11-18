@@ -75,9 +75,9 @@ const resumed = async ($: Engine, on: On, idle: number) => {
 }
 
 test('on the desktop a row that would pass the band stacks, forecast or not', async ($, on) => {
-  // The two windows, the fill, the warm cache and the picker come to about 104 cells at the measured widths.
+  // The two windows, the fill, the warm cache and the picker come to about 104 cells at the measured widths, 92 tightened.
   await resumed($, on, WARM_IDLE)
-  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 100 } })
+  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 88 } })
   expect(await short.find({ key: 'block' })).toBeDefined()
   await short.unmount()
   const room = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 108 } })

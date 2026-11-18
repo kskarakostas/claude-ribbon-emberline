@@ -928,17 +928,16 @@ export const register: Register = (on, options) => {
     const runningAgents = crew.filter(a => a.status === 'running').length
     // Once any subagent has run the button stays, dimmed when none runs, so the panel's costs stay one press away.
     const agentsLabel = runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents'
-    const agentsButton =
-      crew.length > 0 ? (
-        <Box key="agents" flexShrink={0} marginRight={1}>
-          <Button
-            key="agents-toggle"
-            label={agentsLabel}
-            dimColor={runningAgents === 0}
-            onPress={() => togglePane($)}
-          />
-        </Box>
-      ) : null
+    /** What a tight row draws on the button; the label still names it, for a screen reader. */
+    const tightAgents = runningAgents > 0 ? `A${runningAgents}` : 'A'
+    const agentsButtonOf = (isTight: boolean) => (
+      <Box key="agents" flexShrink={0} marginRight={1}>
+        <Button key="agents-toggle" label={agentsLabel} dimColor={runningAgents === 0} onPress={() => togglePane($)}>
+          {isTight ? tightAgents : agentsLabel}
+        </Button>
+      </Box>
+    )
+    const agentsButton = crew.length > 0 ? agentsButtonOf(false) : null
 
     const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
     // Drawings where the surface has them; text in a terminal.
@@ -1037,23 +1036,24 @@ export const register: Register = (on, options) => {
     const minsLeft = view ? Math.max(0, view.ttlMin - view.idleMin) : 0
     const myCost = view ? nextCost(view.model, view.mode, view.tokens, view.ttlMin) : null
     const fillLabel = view && view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
-    const windowText = (w: Window) => {
+    const windowText = (w: Window, isTight: boolean) => {
       const p = parts(w)
-      return ` ${p.left}% left${p.left < LOW_AT ? ' LOW' : ''}${p.reset ? ` · ${p.reset}` : ''}${p.out ? ` · out ~${p.out}` : ''}`
+      return ` ${p.left}% left${p.left < LOW_AT ? ' LOW' : ''}${p.reset ? `${isTight ? ' ' : ' · '}${p.reset}` : ''}${p.out ? ` · out ~${p.out}` : ''}`
     }
 
-    // Where the wide row would pass the band, the cache stacks instead. A drawn surface sums what the row
-    // shows at its measured widths, hit share left out (it shows only with room to spare). The terminal
-    // keeps its estimates, and stacks only for forecasts.
+    // Where the wide row would pass the band, it tightens first: a shorter usage bar, no dot before the
+    // reset, A for Agents. Past that, the cache stacks. A drawn surface sums what the row shows at its
+    // measured widths, hit share left out (it shows only with room to spare). The terminal keeps its
+    // estimates, never tightens, and stacks only for forecasts.
     const textW = (text: string) => text.length * DRAWN_TEXT
     const stored = await read($, fold)
     // Folding needs the card, and the card is a drawing: the terminal stays folded.
     const open = Svg !== null && view !== null && view !== undefined && (stored && stored.mode === view.mode ? stored.open : view.mode === 'cold')
-    const drawnNeeds = !view
+    const drawnNeedsOf = (isTight: boolean) => !view
       ? 0
       : 2 +
         (list.length === 0 ? textW('waiting for the first reply') + 3 : 0) +
-        list.reduce((n, w, i) => n + (i > 0 ? DRAWN_SEP : 0) + textW(`${parts(w).name} `) + BAR_W / DRAWN_PX + textW(windowText(w)), 0) +
+        list.reduce((n, w, i) => n + (i > 0 ? DRAWN_SEP : 0) + textW(`${parts(w).name} `) + (isTight ? TIGHT_BAR_W : BAR_W) / DRAWN_PX + textW(windowText(w, isTight)), 0) +
         (fillLabel ? DRAWN_SEP + textW(fillLabel) : 0) +
         // An open card shows the cache, and the row leaves it out.
         (open
@@ -1061,8 +1061,11 @@ export const register: Register = (on, options) => {
           : DRAWN_SEP + (ROBO_SIZE + chipSvg(view.mode).w) / DRAWN_PX + textW(' ') +
             textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`)) +
         (Select ? DRAWN_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
-        (agentsButton ? DRAWN_BUTTON + textW(agentsLabel) : 0) +
+        (agentsButton ? DRAWN_BUTTON + textW(isTight ? tightAgents : agentsLabel) : 0) +
         DRAWN_FOLD
+    const fullNeeds = drawnNeedsOf(false)
+    const isTight = Svg !== null && !!view && fullNeeds > columns && drawnNeedsOf(true) <= columns
+    const drawnNeeds = isTight ? drawnNeedsOf(true) : fullNeeds
     const wideNeeds =
       ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? AGENTS_CELLS : 0) + forecasts * PACE_CELLS
     const tooWide = Svg ? drawnNeeds > columns : forecasts > 0 && wideNeeds > columns
@@ -1077,10 +1080,10 @@ export const register: Register = (on, options) => {
       return (
         <Box key={`w-${i}`} flexDirection="row" flexShrink={0} alignItems="center">
           <Text color={MUTED} bold>{p.name} </Text>
-          {bar(`bar-${i}`, p.used, cells, BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
+          {bar(`bar-${i}`, p.used, cells, isTight ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
           <Text color={p.col} bold> {p.left}% left</Text>
           {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
-          {p.reset ? <Text color={MUTED}> · {p.reset}</Text> : null}
+          {p.reset ? <Text color={MUTED}>{`${isTight ? ' ' : ' · '}${p.reset}`}</Text> : null}
           {p.out ? <Text color={WARN}>{` · out ~${p.out}`}</Text> : null}
         </Box>
       )
@@ -1165,8 +1168,9 @@ export const register: Register = (on, options) => {
       </Box>
     )
     // The tokens always show; only what is left after them is spare.
+    // Against the full row: a tightened row has none to spare, as the extras go before it tightens.
     const spare = Svg
-      ? columns - drawnNeeds
+      ? columns - fullNeeds
       : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
     const hitCells = Svg ? (hitLabel ? textW(` · ${hitLabel}`) : 0) : HIT_CELLS
     const miniCells = Svg ? textW(' ') + MINI_W / DRAWN_PX : MINI_CELLS
@@ -1237,7 +1241,7 @@ export const register: Register = (on, options) => {
           {grow}
           <Box key="controls" flexDirection="row" flexShrink={0} alignItems="center">
             {warmButton}
-            {agentsButton}
+            {agentsButton && isTight ? agentsButtonOf(true) : agentsButton}
             {button}
           </Box>
         </Box>
