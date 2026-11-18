@@ -26,6 +26,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
+- The version this session runs, as `v1.5.2` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 
@@ -75,7 +76,7 @@ An installed copy is a snapshot: a new version reaches it only when the marketpl
 /plugin marketplace update claude-ribbon-emberline
 ```
 
-Then update `emberline` from `/plugin` and start a new session, or run `/reload-plugins`. `/plugin` shows the installed version.
+Then update `emberline` from `/plugin` and start a new session, or run `/reload-plugins`. `/plugin` shows the installed version; the expanded view shows the one running.
 
 The task-step row reads the desktop app's task list, so it shows there only. Costs are list-price estimates, not a bill.
 

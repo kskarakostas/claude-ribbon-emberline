@@ -61,6 +61,14 @@ const ttl = atom({ plugin: 'emberline', key: 'ttl' } as const, TTL_MS)
 /** Recent usage readings for the forecast, mirrored from `$.store`, which keeps them across sessions. */
 const pace = atom({ plugin: 'emberline', key: 'pace' } as const, {} as PaceLog)
 const PACE_LOG = 'paceLog'
+/** The version plugin.json declares, for the card; null until read, or when it cannot be. */
+const version = atom({ plugin: 'emberline', key: 'version' } as const, null as string | null)
+
+/** Reads the version from the manifest, once a session: a render may not read files or write state. */
+const noteVersion = async ($: EngineInterface): Promise<void> => {
+  const declared = (JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: unknown }).version
+  if (typeof declared === 'string' && declared !== '') await update($, version, () => declared)
+}
 
 const PING_PROMPT = 'Keep-alive ping, not a task. Reply with only the word: ok'
 /** A ping must read at least this share of the context, or the cache was not there. */
@@ -658,6 +666,8 @@ export const register: Register = (on, options) => {
     await pull($).catch(() => null)
     await $.command.register({ name: 'agents-panel', description: 'Show or hide the subagents panel' }).catch(() => null)
     await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
+    // Not awaited: a file hook that stalls must not hold up the session's start. Without it the card shows no version.
+    void noteVersion($).catch(() => null)
     return next(e)
   })
 
@@ -1256,6 +1266,7 @@ export const register: Register = (on, options) => {
       const autoSet = String(settings.auto)
       const warnValue = WARN_PICKS.includes(warnSet) ? warnSet : String(DEFAULT_WARN_MIN)
       const autoValue = WARM_PICKS.includes(autoSet) ? autoSet : 'off'
+      const shown = await read($, version)
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
           {panel ? <Svg key="context" source={panel.source} alt={panel.alt} /> : null}
@@ -1271,6 +1282,7 @@ export const register: Register = (on, options) => {
             {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
             {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
             {crew.length === 0 ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
+            {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
           </Box>
         </Box>
       )

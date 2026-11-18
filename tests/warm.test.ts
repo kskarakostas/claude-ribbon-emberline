@@ -1350,6 +1350,40 @@ test('the expanded view opens the Agents panel before any subagent has run', asy
   await ui.unmount()
 })
 
+/** Serves this plugin's manifest with the given text, or refuses the read when it is null. */
+const manifest = (on: On, text: string | null) => {
+  const reads: string[] = []
+  on('fs.read', (_, e, next) => {
+    if (!e.path.endsWith('/.claude-plugin/plugin.json')) return next(e)
+    reads.push(e.path)
+    return (text === null ? { deny: 'not here' } : { value: text }) as never
+  })
+  return reads
+}
+
+test('the expanded view names the version plugin.json declares, read once', async ($, on) => {
+  const reads = manifest(on, JSON.stringify({ name: 'emberline', version: '9.8.7' }))
+  const { clock } = await start($, on)
+  for (const surface of ['desktop', 'mobile']) {
+    const ui = await openCard($, clock, surface)
+    expect(await ui.find({ type: 'Text', text: /^v9\.8\.7$/ })).toBeDefined()
+    await ui.unmount()
+  }
+  expect(reads.length).toBe(1)
+})
+
+for (const [why, text] of [['cannot be read', null], ['carries no version', '{"name":"emberline"}'], ['carries a version that is not text', '{"version":1}'], ['is not JSON', 'not json']] as const) {
+  test(`a manifest that ${why} shows no version, and the card still opens`, async ($, on) => {
+    const reads = manifest(on, text)
+    const { clock } = await start($, on)
+    const ui = await openCard($, clock)
+    expect(await ui.find({ key: 'set-warn' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^v\d/ })).toBeUndefined()
+    await ui.unmount()
+    expect(reads.length).toBe(1)
+  })
+}
+
 test('on mobile the length button steps from a custom length to the next longer one, and past 12h to off', async ($, on) => {
   const { clock } = await start($, on)
   const ui = await openCard($, clock, 'mobile')

@@ -96,6 +96,8 @@ declare module 'claude-code' {
       autoOff: boolean
       hits: number[]
       pace: PaceLog
+      /** The version plugin.json declares, read at session start, for the card. */
+      version: string | null
     }
   }
 }
