@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { addUsage, costOf, ordered } from './agents'
 import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg, MINI_W } from './context-art'
-import { backgroundFrom, fmtSpan, isWatched, runningLabel } from './running'
+import { backgroundFrom, fmtSpan, isWatched, runningLabel, startedBackground, stoppedBackground } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
 import { noteReading, runOutAt } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceLog, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
@@ -581,6 +581,34 @@ const endIdleList = async ($: EngineInterface, e: { origin?: { kind: string }; t
   await update($, plan, () => null)
 }
 
+/**
+ * A call that starts or stops background work changes the row at once, not at the turn's end.
+ * The main agent's alone: a subagent's work reaches the row with the next list. Never throws.
+ */
+const noteBackground = async <R,>($: EngineInterface, e: { tool: string; agentId?: string; description?: unknown }, done: R): Promise<R> => {
+  if (e.agentId) return done
+  try {
+    const result = (done as { result?: unknown }).result
+    const stopped = stoppedBackground(e.tool, result)
+    const started = startedBackground(e.tool, e, result, await $.clock.now())
+    if (stopped) await update($, background, held => held.filter(b => b.id !== stopped))
+    if (started) await update($, background, held => [...held.filter(b => b.id !== started.id), started])
+  } catch {
+    // The turn-end list brings it.
+  }
+  return done
+}
+
+/** The engine's list of background work in flight, onto the row. Never throws. */
+const noteBackgroundList = async ($: EngineInterface, tasks: Parameters<typeof backgroundFrom>[0] | undefined): Promise<void> => {
+  try {
+    const now = await $.clock.now()
+    await update($, background, held => backgroundFrom(tasks ?? [], held, now))
+  } catch {
+    // The row keeps its last list.
+  }
+}
+
 const dropTool = async ($: EngineInterface, id: number): Promise<void> => {
   try {
     await update($, tools, list => list.filter(t => t.id !== id))
@@ -655,6 +683,10 @@ export const register: Register = (on, options) => {
   let inTurn = false
   const guard: PingGuard = { isPinging: false }
   let toolSeq = 0
+  // Whether the app has sent a stop list this session. Where an organization withholds the stop hooks,
+  // nothing would end a live background entry, so it ends with the turn. Reset on reload, which at worst
+  // restarts an entry's age when the next list re-adds it.
+  let hasStopList = false
   let mixAt = -Infinity
 
   on('session.start', async ($, e, next) => {
@@ -716,23 +748,26 @@ export const register: Register = (on, options) => {
     return { skip: 'keep-warm is holding this session' }
   })
 
+  // A turn must still end, and a subagent still stop: the list never throws.
   on('classic.Stop', async ($, e, next) => {
-    try {
-      const now = await $.clock.now()
-      await update($, background, held => backgroundFrom(e.background_tasks ?? [], held, now))
-    } catch {
-      // The row keeps its last list; a turn must still end.
-    }
+    hasStopList = true
+    await noteBackgroundList($, e.background_tasks)
+    return next(e)
+  })
+
+  on('classic.SubagentStop', async ($, e, next) => {
+    hasStopList = true
+    await noteBackgroundList($, e.background_tasks)
     return next(e)
   })
 
   // No .catch: running `next` a second time would run the tool twice. The helpers never throw.
   on('tool.call', async ($, e, next) => {
-    if (!isWatched(e.tool) || (await isCounted($, e.agentId))) return next(e)
+    if (!isWatched(e.tool) || (await isCounted($, e.agentId))) return noteBackground($, e, await next(e))
     const id = ++toolSeq
     await noteTool($, { id, name: e.tool })
     try {
-      return await next(e)
+      return await noteBackground($, e, await next(e))
     } finally {
       await dropTool($, id)
     }
@@ -871,6 +906,7 @@ export const register: Register = (on, options) => {
     // progress. wrap_up ticks it done, a new list replaces it, /clear drops it, and so
     // does a prompt typed while nothing runs (endIdleList).
     await update($, tools, () => [])
+    if (!hasStopList) await update($, background, () => [])
     await refreshMix($)
     const now = await $.clock.now()
     const c = await read($, cache)

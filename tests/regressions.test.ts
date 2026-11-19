@@ -25,7 +25,7 @@ const TWO = [
 const props = (isWorking: boolean, bodyColumns = 120) =>
   ({ hasSurvey: false, isWorking, maxRows: 8, bodyColumns, scroll: { offset: 0, bodyRows: 8 }, view: {} }) as const
 
-type Options = { tokens?: number; usage?: typeof HIT | null; rateLimits?: SessionRateLimit[]; cost?: number; categories?: object[]; hold?: Promise<void> }
+type Options = { tokens?: number; usage?: typeof HIT | null; rateLimits?: SessionRateLimit[]; cost?: number; categories?: object[]; hold?: Promise<void>; toolResult?: (e: { tool: string }) => object }
 
 let uses: object[] = []
 const start = async ($: Engine, on: On, o: Options = {}) => {
@@ -56,11 +56,12 @@ const start = async ($: Engine, on: On, o: Options = {}) => {
   })
   on('ui.toast', () => ({ value: undefined }) as never)
   on('ui.invalidate', () => ({ value: undefined }) as never)
-  on('tool.call', async () => {
+  on('tool.call', async (_, e) => {
     await o.hold
-    return { result: {} }
+    return { result: o.toolResult?.(e) ?? {} } as never
   })
   on('classic.Stop', () => ({}) as never)
+  on('classic.SubagentStop', () => ({}) as never)
   on('classic.SessionStart', () => ({}) as never)
   on('prompt.submit', (_, e) => ({ text: e.text }) as never)
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
@@ -582,6 +583,96 @@ test('background work shows on the upper row until a turn ends without it', asyn
   await stop($, [SHELL])
   expect(await ui.find({ type: 'Text', text: /Run the test suite 3m/ })).toBeDefined()
   await stop($, [])
+  expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+/** What a tool call returns when it sends work to the background, by tool. */
+const BACKGROUNDED = (e: { tool: string }): object =>
+  e.tool === 'Bash' ? { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' }
+    : e.tool === 'Monitor' ? { taskId: 'm1', timeoutMs: 300_000 }
+      : e.tool === 'TaskStop' ? { message: 'stopped', task_id: 'b1', task_type: 'shell' }
+        : {}
+const call = ($: Engine, e: object, agentId?: string) => ($.tool.call as (e: unknown) => Promise<unknown>)({ ...e, agentId })
+const subagentStop = ($: Engine, tasks: object[]) =>
+  ($.classic.SubagentStop as (e: unknown) => Promise<unknown>)({ hook_event_name: 'SubagentStop', stop_hook_active: false, agent_id: 'a1', agent_transcript_path: '', agent_type: 'general-purpose', background_tasks: tasks })
+
+test('a shell sent to the background shows at once, and keeps its age when the turn ends', async ($, on) => {
+  const { clock } = await start($, on, { toolResult: BACKGROUNDED })
+  await reply($)
+  await turnStart($)
+  await call($, { tool: 'Bash', command: 'bun test', description: 'Run the test suite', run_in_background: true })
+  await clock.advance(120_000)
+
+  let ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Run the test suite 2m/ })).toBeDefined()
+  await ui.unmount()
+  await stop($, [SHELL])
+  await clock.advance(60_000)
+  ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /Run the test suite 3m/ })).toBeDefined()
+  await stop($, [])
+  expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a monitor shows at once; a stopped task leaves at once', async ($, on) => {
+  await start($, on, { toolResult: BACKGROUNDED })
+  await reply($)
+  await turnStart($)
+  await call($, { tool: 'Monitor', description: 'Watch the deploy', timeout_ms: 300_000, command: 'tail -f log' })
+  await call($, { tool: 'Bash', command: 'bun test', description: 'Run the test suite', run_in_background: true })
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Watch the deploy 0s/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Run the test suite 0s/ })).toBeDefined()
+  await call($, { tool: 'TaskStop', task_id: 'b1' })
+  expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Watch the deploy/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a shell that runs in the foreground, or a subagent\'s in the background, adds nothing live', async ($, on) => {
+  await start($, on, { toolResult: e => (e as { agentId?: string }).agentId ? BACKGROUNDED(e) : {} })
+  await reply($)
+  await turnStart($)
+  await call($, { tool: 'Bash', command: 'ls', description: 'List files' })
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose' })
+  await call($, { tool: 'Bash', command: 'bun test', description: 'Run the test suite', run_in_background: true }, 'a1')
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /List files|Run the test suite/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('where no stop list ever comes, a live entry ends with the turn; where one does, it stays', async ($, on) => {
+  await start($, on, { toolResult: BACKGROUNDED })
+  await reply($)
+  await turnStart($)
+  await call($, { tool: 'Bash', command: 'bun test', description: 'Run the test suite', run_in_background: true })
+  await end($, 'answer')
+  let ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeUndefined()
+  await ui.unmount()
+
+  await stop($, [])
+  await turnStart($)
+  await call($, { tool: 'Bash', command: 'bun test', description: 'Run the test suite', run_in_background: true })
+  await end($, 'answer')
+  ui = await band($)
+  expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a subagent ending refreshes the background list mid-turn', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await turnStart($)
+  await subagentStop($, [SHELL])
+
+  const ui = await band($, true)
+  expect(await ui.find({ type: 'Text', text: /Run the test suite 0s/ })).toBeDefined()
+  await subagentStop($, [])
   expect(await ui.find({ type: 'Text', text: /Run the test suite/ })).toBeUndefined()
   await ui.unmount()
 })

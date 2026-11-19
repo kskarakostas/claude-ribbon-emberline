@@ -35,6 +35,23 @@ export const backgroundFrom = (tasks: readonly BackgroundTask[], held: readonly 
       seenAt: held.find(h => h.id === t.id)?.seenAt ?? now,
     }))
 
+const textOf = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null)
+
+/**
+ * The background task a call just started, so the row shows it before the turn ends: a shell
+ * sent or moved to the background, or a monitor. Labelled as the turn-end list labels it, so
+ * the next list keeps it in place.
+ */
+export const startedBackground = (tool: string, args: { description?: unknown }, result: unknown, now: number): BackgroundRun | null => {
+  const r = (result ?? {}) as { backgroundTaskId?: unknown; taskId?: unknown }
+  const id = tool === 'Bash' ? textOf(r.backgroundTaskId) : tool === 'Monitor' ? textOf(r.taskId) : null
+  return id ? { id, label: textOf(args.description) ?? (tool === 'Bash' ? 'shell' : 'monitor'), seenAt: now } : null
+}
+
+/** The task a TaskStop call stopped, or null. */
+export const stoppedBackground = (tool: string, result: unknown): string | null =>
+  tool === 'TaskStop' ? textOf((result as { task_id?: unknown } | undefined)?.task_id) : null
+
 const clipTo = (text: string, max: number): string => (text.length > max ? `${text.slice(0, Math.max(1, max - 1))}…` : text)
 
 const clipLabel = (text: string): string => clipTo(text, BACKGROUND_CHARS)

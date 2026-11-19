@@ -18,7 +18,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 **The upper row**
 - The current step of the task list, a step count and a rough time left. Like the app's list, it lasts across turns until the list is wrapped up, replaced or cleared with `/clear`, or you type a new prompt while nothing runs; between turns it shows while subagents or background work run.
 - Running subagents as one count, plus connector calls and shell commands past 5 seconds. A subagent's own calls stay inside its count.
-- Background work, added when a turn ends; more than two tasks show as a count with the oldest age.
+- Background work. A shell the main session sends to the background, or a monitor it starts, shows as soon as it starts, and a task it stops with `TaskStop` leaves at once. The full list, a subagent's work included, comes from the app when a turn or a subagent ends, so a task that finishes on its own mid-turn shows until then. More than two tasks show as a count with the oldest age.
 - It keeps to one line: what does not fit ends as `+N more`. Where the band is too narrow to share a line with the task step, it takes its own row below it.
 
 **Behind `ⓘ`**
@@ -27,7 +27,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.6.0` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.6.1` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 
@@ -59,7 +59,7 @@ Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm
 **Know before you use it**
 - Pings are real requests and count against your usage. Pings cost as much as one rewrite after roughly 33 hours on Opus 5.5 and 17 hours on most other models, so it pays for gaps of hours, not days.
 - The timer lives in the running session, so the computer must stay awake and the app open.
-- Where an organization manages Claude Code, a plugin you install yourself does not receive the compaction, session-start, stop and model-switch hooks. There the idle-compaction skip, background work, and the `/clear` and `/model` handling do not run. Under a policy that allows only managed hooks, it loads no hooks at all and the ribbon does not show.
+- Where an organization manages Claude Code, a plugin you install yourself does not receive the compaction, session-start, stop and model-switch hooks. There the idle-compaction skip and the `/clear` and `/model` handling do not run, and the background list is incomplete. Under a policy that allows only managed hooks, it loads no hooks at all and the ribbon does not show.
 
 ## Install
 
