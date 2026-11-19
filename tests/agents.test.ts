@@ -14,7 +14,7 @@ const BAND = {
   view: {},
 } as const
 const PANE = {
-  title: 'Agents',
+  title: 'Running',
   isFocused: false,
   bodyColumns: 80,
   placement: 'dock',
@@ -57,8 +57,8 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
   await spawn($)
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('AG 1')
-  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Activity, 1 subagent running')
+  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Run 1·0')
+  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 1 subagent, 0 background tasks')
   await band.unmount()
 
   const ui = await pane($)
@@ -66,11 +66,14 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
   await ui.unmount()
 })
 
-test('no agents means no button', async ($, on) => {
+test('with nothing run the button still shows, Run 0·0, dimmed', async ($, on) => {
   await start($, on)
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect(await band.find({ key: 'agents-toggle' })).toBeUndefined()
+  const button = await band.find({ key: 'agents-toggle' })
+  expect(button?.text).toBe('Run 0·0')
+  expect(button?.props.label).toBe('Running: 0 subagents, 0 background tasks')
+  expect(button?.props.dimColor).toBe(true)
   await band.unmount()
 })
 
@@ -143,13 +146,13 @@ test('Haiku 5.5 is priced by prompt size: the low rate up to 100k, the high rate
   expect(Math.abs((costOf('claude-haiku-5-5', MTOK) ?? 0) - (0.5 + 0.05 + 1)) < 1e-6).toBe(true)
 })
 
-test('/clear empties the Activity panel and drops its button: a new conversation has run no subagents', async ($, on) => {
+test('/clear empties the Running panel and sets its button back to 0: a new conversation has run no subagents', async ($, on) => {
   await start($, on)
   await spawn($)
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect(await band.find({ key: 'agents-toggle' })).toBeUndefined()
+  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Run 0·0')
   await band.unmount()
   const ui = await pane($)
   expect(await ui.find({ text: /No subagents or background tasks yet/ })).toBeDefined()

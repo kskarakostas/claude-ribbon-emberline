@@ -94,7 +94,7 @@ const UNTIL_PICKS = 3
 type PingGuard = { isPinging: boolean }
 
 const PANE = 'emberline-agents'
-const PANE_TITLE = 'Activity'
+const PANE_TITLE = 'Running'
 const UPDATE_PLAN = 'mcp__ccd_turn__update_plan'
 const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 /** Below this a cold start is cheap, so no notification. PROPOSED, tune from use. */
@@ -102,10 +102,9 @@ const WARN_TOKENS = 100_000
 const DEFAULT_WARN_MIN = 10
 
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
-// window; the activity button; then what the two optional readings need.
+// window; the Run button; then what the two optional readings need.
 const ROW_CELLS = 26
 const WINDOW_CELLS = 29
-const AGENTS_CELLS = 8
 const WARM_CELLS = 16
 const HIT_CELLS = 11
 const FILL_CELLS = 14
@@ -715,7 +714,7 @@ export const register: Register = (on, options) => {
       }
     })
     await pull($).catch(() => null)
-    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Activity panel: subagents and background tasks' }).catch(() => null)
+    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Running panel: subagents and background tasks' }).catch(() => null)
     await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
     // Not awaited: a file hook that stalls must not hold up the session's start. Without it the card shows no version.
     void noteVersion($).catch(() => null)
@@ -743,7 +742,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'agents-panel' }, async $ => {
     await togglePane($)
-    return { text: 'Activity panel toggled.' }
+    return { text: 'Running panel toggled.' }
   })
 
   // The app summarises an idle session over 200k at 54 minutes, which would swap out the
@@ -985,15 +984,15 @@ export const register: Register = (on, options) => {
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
     const bgRuns = await read($, background)
-    // The Activity button: AG counts running subagents, BG background tasks. Once any subagent has run AG stays,
-    // so the panel's costs stay one press away; background work brings the button too. Dimmed when nothing runs,
-    // and drawn as pressed while its panel is open.
+    // The Run button, always on the ribbon as a banner of what runs: running subagents first, background
+    // tasks second (`Run 1·2`). Dimmed at 0·0, drawn as pressed while its panel is open.
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-    const agentsText = [crew.length > 0 ? (runningAgents > 0 ? `AG ${runningAgents}` : 'AG') : null, bgRuns.length > 0 ? `BG ${bgRuns.length}` : null].filter(Boolean).join(' · ')
+    const counts = `${runningAgents}·${bgRuns.length}`
+    const agentsText = `Run ${counts}`
     /** What a tight row draws on the button. */
-    const tightAgents = [crew.length > 0 ? (runningAgents > 0 ? `A${runningAgents}` : 'A') : null, bgRuns.length > 0 ? `B${bgRuns.length}` : null].filter(Boolean).join(' ')
-    /** What a screen reader announces, the abbreviations spelt out. */
-    const agentsLabel = ['Activity', runningAgents > 0 ? `${plural(runningAgents, 'subagent')} running` : null, bgRuns.length > 0 ? plural(bgRuns.length, 'background task') : null].filter(Boolean).join(', ')
+    const tightAgents = counts
+    /** What a screen reader announces, the two counts named. */
+    const agentsLabel = `Running: ${plural(runningAgents, 'subagent')}, ${plural(bgRuns.length, 'background task')}`
     const isPaneOpen = (await $.ui.panes().catch(() => [])).some(p => p.id === PANE)
     const agentsButtonOf = (isTight: boolean) => (
       <Box key="agents" flexShrink={0} marginRight={1}>
@@ -1008,9 +1007,11 @@ export const register: Register = (on, options) => {
         </Button>
       </Box>
     )
-    const agentsButton = crew.length > 0 || bgRuns.length > 0 ? agentsButtonOf(false) : null
-    /** The terminal's estimate of the button: `[ AG 1 ]` at least, more with a background count. */
-    const agentsCells = Math.max(AGENTS_CELLS, agentsText.length + 4)
+    // A narrow band draws the counts alone, as a tight row does.
+    const agentsButton = agentsButtonOf(kindOf(columns) !== 'wide')
+    /** The terminal's estimate of the button on a wide row, `[ Run 1·2 ]`, and on a stacked one, `[ 1·2 ]`. */
+    const agentsCells = agentsText.length + 4
+    const stackedAgentsCells = tightAgents.length + 4
 
     const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
     // Drawings where the surface has them; text in a terminal.
@@ -1120,7 +1121,7 @@ export const register: Register = (on, options) => {
     }
 
     // Where the wide row would pass the band, it tightens first: a shorter usage bar, no dot before the
-    // reset, A1 B2 for the activity button. Past that, the cache stacks. A drawn surface sums what the row shows at its
+    // reset, 1·2 for the Run button. Past that, the cache stacks. A drawn surface sums what the row shows at its
     // measured widths, hit share left out (it shows only with room to spare). The terminal keeps its
     // estimates, never tightens, and stacks only for forecasts.
     const textW = (text: string) => text.length * DRAWN_TEXT
@@ -1140,13 +1141,13 @@ export const register: Register = (on, options) => {
             textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`) +
             (view.mode !== 'cold' && emberMark ? DRAWN_FLAME : 0)) +
         (Select ? DRAWN_FLAME_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
-        (agentsButton ? DRAWN_BUTTON + textW(isTight ? tightAgents : agentsText) : 0) +
+        DRAWN_BUTTON + textW(isTight ? tightAgents : agentsText) +
         DRAWN_FOLD
     const fullNeeds = drawnNeedsOf(false)
     const isTight = Svg !== null && !!view && fullNeeds > columns && drawnNeedsOf(true) <= columns
     const drawnNeeds = isTight ? drawnNeedsOf(true) : fullNeeds
     const wideNeeds =
-      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? agentsCells : 0) + forecasts * PACE_CELLS
+      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + agentsCells + forecasts * PACE_CELLS
     const tooWide = Svg ? drawnNeeds > columns : forecasts > 0 && wideNeeds > columns
     const kind = kindOf(columns) === 'wide' && view && tooWide ? 'stacked' : kindOf(columns)
     const isWide = kind === 'wide'
@@ -1173,7 +1174,7 @@ export const register: Register = (on, options) => {
       return `${p.used}%`.length + (p.out ? ` · out ~${p.out}`.length : 0) + 3
     }
     const rowCells = list.reduce((n, w) => n + Math.max(STACK_CELLS, shareCells(w)), 0)
-    const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + (agentsButton ? agentsCells : 0)
+    const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + stackedAgentsCells
     const isOutBeside = rowCells + besideCells <= columns
 
     const stacked = (w: Window, i: number) => {
@@ -1250,7 +1251,7 @@ export const register: Register = (on, options) => {
     // Against the full row: a tightened row has none to spare, as the extras go before it tightens.
     const spare = Svg
       ? columns - fullNeeds
-      : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? agentsCells : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
+      : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - agentsCells - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
     const hitCells = Svg ? (hitLabel ? textW(` · ${hitLabel}`) : 0) : HIT_CELLS
     const miniCells = Svg ? textW(' ') + MINI_W / DRAWN_PX : MINI_CELLS
     const costText = facts?.costUsd !== undefined ? ` · ${usd(facts.costUsd)}` : null
@@ -1321,7 +1322,7 @@ export const register: Register = (on, options) => {
           {grow}
           <Box key="controls" flexDirection="row" flexShrink={0} alignItems="center">
             {warmButton}
-            {agentsButton && isTight ? agentsButtonOf(true) : agentsButton}
+            {agentsButtonOf(isTight)}
             {button}
           </Box>
         </Box>
@@ -1349,7 +1350,7 @@ export const register: Register = (on, options) => {
           )}
           {grow}
           {warmButton}
-          {agentsButton}
+          {agentsButtonOf(true)}
           {button}
         </Box>
       )
@@ -1366,7 +1367,7 @@ export const register: Register = (on, options) => {
           {fill}
           {grow}
           {warmButton}
-          {agentsButton}
+          {agentsButtonOf(true)}
           {button}
         </Box>,
       ]
@@ -1383,7 +1384,7 @@ export const register: Register = (on, options) => {
         : null
       const c = cardSvg(view, emberView, note, await read($, hits))
       const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
-      // What the folded row has no room for: the settings, the panel before any subagent ran, and on
+      // What the folded row has no room for: the settings, and on
       // mobile, which draws no picker, the whole Ember menu. A picker where there is one, else a
       // button that steps to the next value.
       const choice = (key: string, label: string, value: string, values: readonly string[], name: (v: string) => string, onPick: (v: string) => void) =>
@@ -1411,7 +1412,6 @@ export const register: Register = (on, options) => {
                 ]}
             {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
             {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
-            {!agentsButton ? <Button key="agents-open" label="Activity panel" dimColor onPress={() => togglePane($)} /> : null}
             {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
           </Box>
         </Box>

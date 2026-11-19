@@ -1370,13 +1370,13 @@ test('on mobile the expanded view steps through the lengths and gives Ping now, 
   await ui.unmount()
 })
 
-test('the expanded view opens the Activity panel while the activity button is not on the ribbon', async ($, on) => {
+test('the Run button is on the ribbon from the start and opens the Running panel; the card needs no second way in', async ($, on) => {
   const { clock, opened } = await start($, on)
   const ui = await openCard($, clock)
-  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
-  await ui.press({ key: 'agents-open' })
-  expect(opened).toEqual(['emberline-agents:Activity'])
-  expect((await ui.find({ key: 'agents-open' }))?.props.label).toBe('Activity panel')
+  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Run 0·0')
+  expect(await ui.find({ key: 'agents-open' })).toBeUndefined()
+  await ui.press({ key: 'agents-toggle' })
+  expect(opened).toEqual(['emberline-agents:Running'])
   await ui.unmount()
 })
 

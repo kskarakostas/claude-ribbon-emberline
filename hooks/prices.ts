@@ -1,4 +1,4 @@
-// List prices, the one table the card, the ribbon and the Agents panel all read. Pure.
+// List prices, the one table the card, the ribbon and the Running panel all read. Pure.
 
 /** $ per million tokens: input, output, cache read, cache write at the 1-hour rate. */
 export type Rates = readonly [input: number, output: number, read: number, write: number]

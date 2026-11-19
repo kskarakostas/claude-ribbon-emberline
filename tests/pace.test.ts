@@ -126,9 +126,10 @@ test('the forecast reads the readings earlier sessions kept, and each reading ad
 })
 
 test('a stacked window keeps three lines: the forecast joins the share used', async ($, on) => {
+  // From about 72 to 82 cells the row stacks and still has room for the forecast beside the share.
   await start($, on, [{ kind: 'seven_day', percentUsed: 30, resetsAt: iso(NOW + 5 * DAY) }])
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 60, context_tokens: 300000, model: 'claude-opus-5-5' })
-  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 70 } })
+  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 76 } })
   expect(await band.find({ key: 'block' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: /^ · out ~4d 16h$/ })).toBeDefined()
   expect(await band.find({ type: 'Text', text: /^out ~4d 16h$/ })).toBeUndefined()
@@ -163,7 +164,7 @@ test('the wide row keeps a forecast wherever its measured width fits, and stacks
   await short.unmount()
 })
 
-test('short of room for the full row, the row tightens before it stacks: a shorter bar, no dot before the reset, A1 for AG 1', async ($, on) => {
+test('short of room for the full row, the row tightens before it stacks: a shorter bar, no dot before the reset, 1·0 for Run 1·0', async ($, on) => {
   on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }) as never)
   await start($, on, [{ kind: 'seven_day', percentUsed: 30, resetsAt: iso(NOW + 5 * DAY) }])
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'resume', seconds_since_last_response: 60, context_tokens: 300000, model: 'claude-opus-5-5' })
@@ -181,9 +182,9 @@ test('short of room for the full row, the row tightens before it stacks: a short
     await ui.unmount()
     return seen
   }
-  // The full row needs about 92 cells with the running agent, the tight one about 84.
-  expect(await at(110)).toEqual({ isRow: true, agents: 'AG 1', named: 'Activity, 1 subagent running', bar: 100, dot: true })
-  expect(await at(88)).toEqual({ isRow: true, agents: 'A1', named: 'Activity, 1 subagent running', bar: 60, dot: false })
+  // The full row needs about 95 cells with the running agent, the tight one about 85.
+  expect(await at(110)).toEqual({ isRow: true, agents: 'Run 1·0', named: 'Running: 1 subagent, 0 background tasks', bar: 100, dot: true })
+  expect(await at(88)).toEqual({ isRow: true, agents: '1·0', named: 'Running: 1 subagent, 0 background tasks', bar: 60, dot: false })
   expect((await at(81)).isRow).toBe(false)
 })
 
