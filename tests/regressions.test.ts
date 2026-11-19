@@ -363,7 +363,7 @@ test('a resumed agent keeps its tokens and start time', async ($, on) => {
     surface: 'desktop',
     component: 'Pane',
     requestId: 'emberline-agents',
-    props: { title: 'Running', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+    props: { title: 'Act', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
   expect(await ui.find({ type: 'Text', text: /401k/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /▸/ })).toBeDefined()
@@ -702,7 +702,7 @@ test('background work counts second on the Act button, and lights it', async ($,
   ui = await band($)
   const button = await ui.find({ key: 'agents-toggle' })
   expect(button?.text).toBe('Act 0·2') // subagents first, background tasks second
-  expect(button?.props.label).toBe('Running: 0 subagents, 2 background tasks')
+  expect(button?.props.label).toBe('Act: 0 subagents, 2 background tasks running')
   expect(button?.props.dimColor).toBe(false)
   await ui.unmount()
 
@@ -710,17 +710,17 @@ test('background work counts second on the Act button, and lights it', async ($,
   const tight = await band($, false, 104)
   expect((await tight.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))?.props.width).toBe(60)
   expect((await tight.find({ key: 'agents-toggle' }))?.text).toBe('0·2')
-  expect((await tight.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 0 subagents, 2 background tasks')
+  expect((await tight.find({ key: 'agents-toggle' }))?.props.label).toBe('Act: 0 subagents, 2 background tasks running')
   await tight.unmount()
 })
 
-test('the Running panel lists background work with its kind and age, after the subagents', async ($, on) => {
+test('the Act panel lists background work with its kind and age, after the subagents', async ($, on) => {
   const { clock } = await start($, on)
   await reply($)
   await stop($, [SHELL, { id: 'm1', type: 'monitor', status: 'running', description: 'Watch the deploy' }])
   await clock.advance(120_000)
 
-  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Running', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
+  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Act', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
   expect(await pane.find({ text: /No subagents/ })).toBeUndefined()
   expect(await pane.find({ type: 'Text', text: 'Subagents' })).toBeUndefined() // a section shows only with rows
   expect(await pane.find({ type: 'Text', text: 'Background tasks · 2' })).toBeDefined()
@@ -730,13 +730,13 @@ test('the Running panel lists background work with its kind and age, after the s
   await pane.unmount()
 })
 
-test('the Running panel heads subagents and background tasks apart, each with its count', async ($, on) => {
+test('the Act panel heads subagents and background tasks apart, each with its count', async ($, on) => {
   await start($, on)
   await reply($)
   await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review the diff', subagentType: 'general-purpose', background: true })
   await stop($, [SHELL])
 
-  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Running', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
+  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Act', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
   const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
   const at = (t: string) => texts.findIndex(x => x === t || x?.includes(t))
   expect(at('Subagents · 1')).toBeGreaterThan(-1)
@@ -782,7 +782,7 @@ test('a narrow band draws the Act button as its counts alone', async ($, on) => 
   for (const columns of [36, 53]) {
     const ui = await band($, false, columns)
     expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('0·0')
-    expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 0 subagents, 0 background tasks')
+    expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Act: 0 subagents, 0 background tasks running')
     await ui.unmount()
   }
 })
@@ -1074,13 +1074,13 @@ test('the Act button counts running subagents first, lit while they run and dimm
 
   await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
   expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Act 1·0')
-  expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 1 subagent, 0 background tasks')
+  expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Act: 1 subagent, 0 background tasks running')
   expect((await ui.find({ key: 'agents-toggle' }))?.props.dimColor).toBe(false)
 
   await end($, 'answer', 'a1')
   const after = await ui.find({ key: 'agents-toggle' })
   expect(after?.text).toBe('Act 0·0')
-  expect(after?.props.label).toBe('Running: 0 subagents, 0 background tasks')
+  expect(after?.props.label).toBe('Act: 0 subagents, 0 background tasks running')
   expect(after?.props.dimColor).toBe(true)
   await ui.unmount()
 })

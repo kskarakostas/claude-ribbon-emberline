@@ -27,12 +27,12 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.6.5` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.6.6` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 
 **On request**
-- An Act button, always on the ribbon: running subagents first, background tasks second, as in `Act 1·2`. It dims at `Act 0·0` and reads as pressed while its panel is open. The Running panel (the button, or `/agents-panel`) lists, under `Subagents`, each one's model, time, tokens and estimated cost, and under `Background tasks`, each task's kind and age. `/clear` empties the subagents.
+- An Act button, always on the ribbon: running subagents first, background tasks second, as in `Act 1·2`. It dims at `Act 0·0` and reads as pressed while its panel is open. The Act panel (the button, or `/agents-panel`) lists, under `Subagents`, each one's model, time, tokens and estimated cost, and under `Background tasks`, each task's kind and age. `/clear` empties the subagents.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would. Each notification starts with the session's folder and its opening prompt, as in `noesis · “Refactor the billing export so it strea…”: 508k tokens go cold in 10m`, so two sessions in one folder read apart.
 
 Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no card), with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.

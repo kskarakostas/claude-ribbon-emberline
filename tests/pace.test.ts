@@ -183,8 +183,8 @@ test('short of room for the full row, the row tightens before it stacks: a short
     return seen
   }
   // The full row needs about 95 cells with the running agent, the tight one about 85.
-  expect(await at(110)).toEqual({ isRow: true, agents: 'Act 1·0', named: 'Running: 1 subagent, 0 background tasks', bar: 100, dot: true })
-  expect(await at(88)).toEqual({ isRow: true, agents: '1·0', named: 'Running: 1 subagent, 0 background tasks', bar: 60, dot: false })
+  expect(await at(110)).toEqual({ isRow: true, agents: 'Act 1·0', named: 'Act: 1 subagent, 0 background tasks running', bar: 100, dot: true })
+  expect(await at(88)).toEqual({ isRow: true, agents: '1·0', named: 'Act: 1 subagent, 0 background tasks running', bar: 60, dot: false })
   expect((await at(81)).isRow).toBe(false)
 })
 
