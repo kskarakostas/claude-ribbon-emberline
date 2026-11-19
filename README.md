@@ -22,12 +22,13 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - It keeps to one line: what does not fit ends as `+N more`. Where the band is too narrow to share a line with the task step, it takes its own row below it.
 
 **Behind `ⓘ`**
-- The context as one bar with its total; the `▸` beside it opens each category with its tokens and share, and `▾` folds it again. Counted locally with no API call.
-- Idle time, tokens in cache, and what the next message costs on each model, your own at its exact version. A version the price table does not list yet shows its family's current price marked `~` here, and no price on the ribbon.
+- The context as one bar with its total; the `▸` beside it opens each category with its tokens and share, counted locally with no API call, and what the next message costs on each model. `▾` folds them again.
+- Idle time, tokens in cache, and what your next message costs at your model's exact version. A version the price table does not list yet shows its family's current price marked `~` here, and no price on the ribbon.
+- Each usage limit: its bar, coloured as on the ribbon, with a mark where an even pace through the window would be (for the 5-hour and 7-day limits), the share used, when it resets (a clock time, with the weekday past a day), and when it runs out at the current pace if that comes first.
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.6.9` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.7.0` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 

@@ -31,6 +31,13 @@ const usedAt = (points: readonly PaceSample[], at: number): number => {
   return before.used
 }
 
+/** The share of the window already passed, 0 to 1, for its even-pace mark; null when its length or reset is unknown. */
+export const elapsedShare = (kind: string, resetsAt: number | null, now: number): number | null => {
+  const span = WINDOW_MS[kind]
+  if (span === undefined || resetsAt === null) return null
+  return Math.max(0, Math.min(1, (now - (resetsAt - span)) / span))
+}
+
 /**
  * When the window reaches 100% at the faster of its average pace since it reset and its pace over
  * the recent stretch, or null when that comes after the reset, too little of the window has passed,

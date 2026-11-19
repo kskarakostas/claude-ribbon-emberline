@@ -3,7 +3,7 @@ import type { On, SessionRateLimit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardSvg, ticksSvg, usageColour, USAGE_SCALE } from '../hooks/cache-art'
+import { cardSvg, fmtWhen, pricesSvg, ticksSvg, usageColour, USAGE_SCALE } from '../hooks/cache-art'
 import { contextPanelSvg } from '../hooks/context-art'
 
 import { applyPlan, etaMs } from '../hooks/plan'
@@ -1268,8 +1268,71 @@ test('running subagents show on the upper row and leave when they end', async ($
 
 test('the card marks its own column as an estimate for a version the price table does not list', async () => {
   const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', ttlMin: 60 } as const
-  expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('~$0.06')
+  expect(cardSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('~$0.06 next')
   expect(cardSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('~$')
+  expect(pricesSvg({ ...view, model: 'claude-opus-5-6' }).source).toContain('~$0.06')
+  expect(pricesSvg({ ...view, model: 'claude-opus-5-5' }).source).not.toContain('~$')
+})
+
+const LIMITS = [
+  { name: '7D', used: 43, colour: USAGE_SCALE.yellow, resets: 'Fri 14:00', out: null, evenShare: 0.62 },
+  { name: '5H', used: 88, colour: USAGE_SCALE.red, resets: '17:30', out: '40m', evenShare: 0.5 },
+]
+
+test('the card shows each usage limit: its bar against an even-pace mark, share used, reset and run-out time', async () => {
+  const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const card = cardSvg(view, null, null, [], LIMITS)
+  const texts = textsOf(card.source)
+  expect(texts).toContain('USAGE LIMITS')
+  expect(texts).toEqual(expect.arrayContaining(['7D', '43%', 'Fri 14:00', '5H', '88%', '17:30', '~40m']))
+  expect(texts).not.toContain('NEXT MESSAGE, CACHED') // the models' prices fold under the context
+  expect(texts.some(t => /^\$\d+\.\d\d next$/.test(t ?? ''))).toBe(true) // the session's own price stays
+  expect((card.source.match(/class="even"/g) ?? []).length).toBe(2)
+  expect(card.source).toContain(`fill="${USAGE_SCALE.red}"`)
+  expect(card.alt).toContain('7D 43% used, 62% of the window passed, resets Fri 14:00.')
+  expect(card.alt).toContain('5H 88% used, 50% of the window passed, resets 17:30, runs out in about 40m.')
+  expect(textsOf(cardSvg(view).source)).toContain('No usage reading yet')
+})
+
+test('the models\' prices draw on their own, for the fold', async () => {
+  const view = { mode: 'cold', idle: '2h', idleMin: 120, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const prices = pricesSvg(view)
+  expect(textsOf(prices.source)).toEqual(expect.arrayContaining(['NEXT MESSAGE COSTS', 'FABLE', 'OPUS', 'SONNET', 'HAIKU']))
+  expect(prices.alt).toMatch(/^Next message on each model: Fable \$/)
+})
+
+test('a reset today reads as a clock time, a later one with its weekday, a passed one as resetting', () => {
+  const now = new Date(2099, 0, 1, 10, 0).getTime() // a Thursday
+  expect(fmtWhen(new Date(2099, 0, 1, 17, 30).getTime(), now)).toBe('17:30')
+  expect(fmtWhen(new Date(2099, 0, 2, 6, 0).getTime(), now)).toBe('Fri 06:00') // under a day ahead, but not today
+  expect(fmtWhen(new Date(2099, 0, 3, 14, 0).getTime(), now)).toBe('Sat 14:00')
+  expect(fmtWhen(new Date(2099, 0, 1, 9, 0).getTime(), now)).toBe('resetting')
+})
+
+test('three limits fit the card, the text and mark of the third row inside its height', () => {
+  const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const three = [...LIMITS, { name: 'SPEND', used: 10, colour: USAGE_SCALE.green, resets: '', out: null, evenShare: 0.3 }]
+  const card = cardSvg(view, null, null, [], three)
+  const ys = [...card.source.matchAll(/<text x="392" y="(\d+(?:\.\d+)?)"[^>]*>(7D|5H|SPEND)</g)].map(m => Number(m[1]))
+  expect(ys.length).toBe(3)
+  expect(Math.max(...ys)).toBeLessThanOrEqual(card.h - 3)
+  const marks = [...card.source.matchAll(/class="even" x="[^"]+" y="([\d.]+)" width="1.5" height="(\d+)"/g)].map(m => Number(m[1]) + Number(m[2]))
+  expect(Math.max(...marks)).toBeLessThanOrEqual(card.h)
+})
+
+test('the expanded view shows the usage limits, and the models\' prices only under the triangle', async ($, on) => {
+  await start($, on, { rateLimits: TWO, categories: CATEGORIES })
+  await reply($)
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  const alts = async () => (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
+  const cardAlt = (await alts()).find(a => a.startsWith('Cache'))
+  expect(cardAlt).toContain('7D 64% used')
+  expect(cardAlt).toContain('5H 18% used')
+  expect((await alts()).some(a => a.startsWith('Next message on each model'))).toBe(false)
+  await ui.press({ key: 'context-fold' })
+  expect((await alts()).some(a => a.startsWith('Next message on each model'))).toBe(true)
+  await ui.unmount()
 })
 
 test('the card draws the cache hit of recent requests, a low one in amber, and says it in words', async () => {

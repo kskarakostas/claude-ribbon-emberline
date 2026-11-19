@@ -6,13 +6,13 @@ import { applyPlan, currentOf, doneOf, etaMs } from './plan'
 import { contextMiniSvg, contextPanelSvg, MINI_W } from './context-art'
 import { backgroundFrom, fmtSpan, isWatched, runningLabel, startedBackground, stoppedBackground } from './running'
 import { capFrom, coldAtMs, DEFAULT_CAP_MS, emberLeftMs, HOUR_MS, LATE_MS, PING_MS, pingCount, shouldPing, untilChoices, untilFrom } from './warm'
-import { noteReading, runOutAt } from './pace'
+import { elapsedShare, noteReading, runOutAt } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceLog, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
-  cardSvg, chipSvg, familyOf, FLAME_H, FLAME_W, flameSvg, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usageColour, usd,
+  cardSvg, chipSvg, familyOf, FLAME_H, FLAME_W, flameSvg, fmtClock, fmtIdle, fmtWhen, pricesSvg, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usageColour, usd,
 } from './cache-art'
-import type { CacheView, EmberView } from './cache-art'
+import type { CacheView, EmberView, LimitRow } from './cache-art'
 
 // A band above the prompt on the app's own background: neutral grey text,
 // tick bars. Each usage window's bar fills with what is used, beside the share used,
@@ -1387,12 +1387,19 @@ export const register: Register = (on, options) => {
           (recache === null ? '' : `, against ${usd(recache)} to re-cache`) +
           `. Last ping ${fmtClock(tally.lastAt)} read ${tok(tally.lastServed)}.`
         : null
-      const c = cardSvg(view, emberView, note, await read($, hits))
+      const limitRows: LimitRow[] = list.map(w => {
+        const p = parts(w)
+        const resetsAt = w.resetsAt ? Date.parse(w.resetsAt) : NaN
+        const at = Number.isNaN(resetsAt) ? null : resetsAt
+        return { name: p.name, used: p.used, colour: p.col, resets: at === null ? '' : fmtWhen(at, now), out: p.out, evenShare: elapsedShare(w.kind, at, now) }
+      })
+      const c = cardSvg(view, emberView, note, await read($, hits), limitRows)
       const isContextOpen = await read($, contextOpen)
       const hasMix = composition !== null && composition.rows.length > 0
       // The header shares its line with the triangle; the table below keeps the card's full width.
       const panel = hasMix ? contextPanelSvg(composition, { part: 'header', width: CARD_PX - CONTEXT_FOLD_PX }) : null
       const table = hasMix && isContextOpen ? contextPanelSvg(composition, { part: 'table' }) : null
+      const prices = isContextOpen ? pricesSvg(view) : null
       // What the folded row has no room for: the settings, and on
       // mobile, which draws no picker, the whole Ember menu. A picker where there is one, else a
       // button that steps to the next value.
@@ -1409,15 +1416,15 @@ export const register: Register = (on, options) => {
       const shown = await read($, version)
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
-          {panel ? (
-            <Box key="context-row" flexDirection="row" alignItems="flex-start">
-              <Box key="context-fold-box" flexShrink={0}>
-                <Button key="context-fold" label={isContextOpen ? '▾' : '▸'} plain dimColor onPress={() => update($, contextOpen, o => !o)} />
-              </Box>
-              <Svg key="context" source={panel.source} alt={panel.alt} />
+          <Box key="context-row" flexDirection="row" alignItems="flex-start">
+            <Box key="context-fold-box" flexShrink={0}>
+              <Button key="context-fold" label={isContextOpen ? '▾' : '▸'} plain dimColor onPress={() => update($, contextOpen, o => !o)} />
             </Box>
-          ) : null}
+            {/* Before the first count of the context, the triangle still opens the models' prices. */}
+            {panel ? <Svg key="context" source={panel.source} alt={panel.alt} /> : <Text key="context-wait" color={MUTED}>Context and prices</Text>}
+          </Box>
           {table ? <Svg key="context-table" source={table.source} alt={table.alt} /> : null}
+          {prices ? <Svg key="prices" source={prices.source} alt={prices.alt} /> : null}
           <Svg key="cache-card" source={c.source} alt={c.alt} />
           <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
             {Select

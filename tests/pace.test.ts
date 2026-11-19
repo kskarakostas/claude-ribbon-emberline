@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { noteReading, runOutAt } from '../hooks/pace'
+import { elapsedShare, noteReading, runOutAt } from '../hooks/pace'
 
 const NOW = Date.parse('2098-12-31T22:00:00Z')
 const MIN = 60_000
@@ -204,4 +204,13 @@ test('when two forecasts would not fit the wide row, the ribbon stacks', async (
   expect(await narrower.find({ key: 'block' })).toBeDefined()
   expect(await narrower.find({ type: 'Text', text: /out ~2h 0m/ })).toBeDefined()
   await narrower.unmount()
+})
+
+test('the even-pace mark is the share of the window already passed, or null for a window of unknown length', () => {
+  const now = Date.parse('2099-01-01T00:00:00Z')
+  expect(elapsedShare('seven_day', now + 3.5 * 24 * 3_600_000, now)).toBe(0.5)
+  expect(Math.round((elapsedShare('five_hour', now + 4 * 3_600_000, now) ?? 0) * 1000) / 1000).toBe(0.2)
+  expect(elapsedShare('five_hour', now + 6 * 3_600_000, now)).toBe(0) // not started by this reckoning: clamped
+  expect(elapsedShare('spend_limit', now + 3_600_000, now)).toBeNull()
+  expect(elapsedShare('seven_day', null, now)).toBeNull()
 })

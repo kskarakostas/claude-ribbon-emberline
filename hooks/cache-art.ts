@@ -113,6 +113,19 @@ export const fmtClock = (ms: number): string => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+/** A time ahead: its clock time today, else with its weekday, as `Sat 14:00`; one already passed is `resetting`, as on the ribbon. */
+export const fmtWhen = (ms: number, now: number): string => {
+  if (ms <= now) return 'resetting'
+  return new Date(ms).toDateString() === new Date(now).toDateString() ? fmtClock(ms) : `${DAYS[new Date(ms).getDay()]} ${fmtClock(ms)}`
+}
+
+/**
+ * A usage limit as the card draws it: its name, share used and colour, when it resets, when it runs
+ * out at its pace (null when not before the reset), and the share of the window passed (null unknown).
+ */
+export type LimitRow = { name: string; used: number; colour: string; resets: string; out: string | null; evenShare: number | null }
+
 // ---------- SVG helpers ----------
 export const svgDoc = (w: number, h: number, body: string, font: boolean): string =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
@@ -307,11 +320,52 @@ const hitStrip = (hits: readonly number[]): { svg: string; alt: string } => {
   return { svg, alt }
 }
 
+/** The session's own next-message price, `~` marking a version the table does not list; null for a model it cannot price. */
+const ownPrice = (v: CacheView): string | null => {
+  const own = nextCost(v.model, v.mode, v.tokens, v.ttlMin)
+  if (own !== null) return usd(own)
+  const family = MODELS.find(m => m.id === v.mine)
+  const est = family ? nextCost(family.ref, v.mode, v.tokens, v.ttlMin) : null
+  return est === null ? null : `~${usd(est)}`
+}
+
+const svgText = (x: number, y: number, str: string, size: number, weight: number, fill: string, anchor = 'start', ls = 0) =>
+  `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" letter-spacing="${ls}" text-anchor="${anchor}">${str}</text>`
+
+/** What the next message costs on each model, drawn on its own under the context table. */
+export const pricesSvg = (v: CacheView): { source: string; w: number; h: number; alt: string } => {
+  const cold = v.mode === 'cold'
+  let g = svgText(0, 18, cold ? 'NEXT MESSAGE COSTS' : 'NEXT MESSAGE, CACHED', 11, 700, MUTED, 'start', 1.2)
+  const said: string[] = []
+  MODELS.forEach((m, i) => {
+    const x = i * 82
+    const mine = m.id === v.mine
+    // Every ref is in the price table; a session version the table does not list shows its family's, marked as an estimate.
+    const own = mine ? nextCost(v.model, v.mode, v.tokens, v.ttlMin) : null
+    const cost = own ?? nextCost(m.ref, v.mode, v.tokens, v.ttlMin) ?? 0
+    const price = (mine && own === null ? '~' : '') + usd(cost)
+    g += svgText(x, 36, price, 14, mine ? 700 : 500, mine ? TEXT : MUTED)
+    g += svgText(x, 50, m.NAME, 10, 700, mine ? HUE[v.mode] : MUTED, 'start', 0.6)
+    said.push(`${m.NAME[0]}${m.NAME.slice(1).toLowerCase()} ${price}`)
+  })
+  const h = 56
+  return { source: svgDoc(CARD_W, h, g, true), w: CARD_W, h, alt: `Next message on each model: ${said.join(', ')}.` }
+}
+
+/** The limits section's columns: name, bar, share, reset, run-out. */
+const LIM_X = 392
+// The bar starts clear of `SPEND`, the longest name, which ends near x428 at 10 px bold.
+const LIM_BAR_X = 432
+const LIM_BAR_W = 106
+const LIM_PCT_X = 546
+const LIM_RESET_X = 590
+
 export const cardSvg = (
   v: CacheView,
   ember: EmberView | null = null,
   note: string | null = null,
   hits: readonly number[] = [],
+  limits: readonly LimitRow[] = [],
 ): { source: string; w: number; h: number; alt: string } => {
   const { mode } = v
   const cold = mode === 'cold'
@@ -339,22 +393,42 @@ export const cardSvg = (
   // The conversation's size.
   const share = v.window > 0 ? Math.round((v.tokens / v.window) * 100) : 0
   g += t(240, 18, cold ? 'RE-CACHE' : 'IN CACHE', 11, 700, MUTED, 'start', 1.2)
+  // The session's own next-message price stays in view; every model's folds under the context table.
+  const price = ownPrice(v)
+  if (price) g += t(366, 18, `${price} next`, 10, 600, TEXT, 'end')
   g += t(240, 44, tok(v.tokens), 20, 600, TEXT) + t(296, 44, `${share}% of ${tok(v.window)}`, 11, 500, MUTED)
   const strip = hitStrip(hits.slice(-HITS_MAX))
   g += strip.svg
   g += vline(376)
 
-  // What the next message costs, by model.
-  g += t(392, 18, cold ? 'NEXT MESSAGE COSTS' : 'NEXT MESSAGE, CACHED', 11, 700, MUTED, 'start', 1.2)
-  MODELS.forEach((m, i) => {
-    const x = 392 + i * 82
-    const mine = m.id === v.mine
-    // Every ref is in the price table; a session version the table does not list shows its family's, marked as an estimate.
-    const own = mine ? nextCost(v.model, mode, v.tokens, v.ttlMin) : null
-    const cost = own ?? nextCost(m.ref, mode, v.tokens, v.ttlMin) ?? 0
-    g += t(x, 36, (mine && own === null ? '~' : '') + usd(cost), 14, mine ? 700 : 500, mine ? TEXT : MUTED)
-    g += t(x, 50, m.NAME, 10, 700, mine ? hue : MUTED, 'start', 0.6)
+  // Each usage limit: its bar against where an even pace would be, the share used, when it resets, when it runs out.
+  g += t(LIM_X, 18, 'USAGE LIMITS', 11, 700, MUTED, 'start', 1.2)
+  g += t(LIM_RESET_X, 18, 'RESETS', 9, 700, MUTED, 'start', 1)
+  g += t(CARD_W, 18, 'RUNS OUT', 9, 700, MUTED, 'end', 1)
+  const shown = limits.slice(0, 3)
+  // Three rows pack tighter and start higher, so the third stays inside the card.
+  const [top, step] = shown.length > 2 ? [33, 12] : [35, 17]
+  const limitWords: string[] = []
+  shown.forEach((l, i) => {
+    const y = top + i * step
+    const fill = (LIM_BAR_W * Math.max(0, Math.min(100, l.used))) / 100
+    g += t(LIM_X, y, l.name, 10, 700, MUTED, 'start', 0.6)
+    g += `<rect x="${LIM_BAR_X}" y="${y - 7}" width="${LIM_BAR_W}" height="6" rx="3" fill="${EMPTY}"/>`
+    g += `<rect x="${LIM_BAR_X}" y="${y - 7}" width="${fill.toFixed(1)}" height="6" rx="3" fill="${l.colour}"/>`
+    if (l.evenShare !== null) {
+      g += `<rect class="even" x="${(LIM_BAR_X + LIM_BAR_W * l.evenShare - 0.75).toFixed(1)}" y="${y - 9}" width="1.5" height="10" fill="${TEXT}" opacity=".75"/>`
+    }
+    g += t(LIM_PCT_X, y, `${l.used}%`, 11, 700, l.colour)
+    g += t(LIM_RESET_X, y, l.resets, 11, 500, TEXT)
+    g += t(CARD_W, y, l.out ? `~${l.out}` : '-', 11, l.out ? 600 : 500, l.out ? WARN : MUTED, 'end')
+    limitWords.push(
+      `${l.name} ${l.used}% used` +
+        (l.evenShare !== null ? `, ${Math.round(l.evenShare * 100)}% of the window passed` : '') +
+        (l.resets ? `, resets ${l.resets}` : '') +
+        (l.out ? `, runs out in about ${l.out}` : '') + '.',
+    )
   })
+  if (shown.length === 0) g += t(LIM_X, 38, 'No usage reading yet', 11, 500, MUTED)
 
   // Keep-warm's tally for the session, on a row of its own under the card.
   const h = note ? CARD_H + NOTE_H : CARD_H
@@ -365,6 +439,6 @@ export const cardSvg = (
     : held
       ? `Cache warm. Ember holds it for ${ember.left} more, then it goes cold about ${ember.coldAt}. ${tok(v.tokens)} tokens cached.`
       : `Cache warm. Goes cold in ${left} minute${left === 1 ? '' : 's'}. ${tok(v.tokens)} tokens cached.`
-  const alt = [alt0, strip.alt, note].filter(Boolean).join(' ')
+  const alt = [alt0, price ? `Next message ${price}.` : '', strip.alt, ...limitWords, note].filter(Boolean).join(' ')
   return { source: svgDoc(CARD_W, h, g, true), w: CARD_W, h, alt }
 }
