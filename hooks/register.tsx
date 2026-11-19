@@ -10,13 +10,13 @@ import { noteReading, runOutAt } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceLog, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
-  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usd,
+  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usageColour, usd,
 } from './cache-art'
 import type { CacheView, EmberView } from './cache-art'
 
 // A band above the prompt on the app's own background: neutral grey text,
-// tick bars. Each usage window's bar fills with what is used, beside the share LEFT,
-// 7-day first, then 5-hour; a window under 15% left turns amber and adds a bold LOW.
+// tick bars. Each usage window's bar fills with what is used, beside the share used,
+// 7-day first, then 5-hour; both colour green, yellow, orange, red as the share grows.
 //
 // After the first reply it also shows the prompt cache: WARM (sage, Robo bobbing)
 // for an hour after the last request, then COLD (blue, Robo frozen) with what the
@@ -28,7 +28,6 @@ const CELLS = 10
 /** Tick bar widths in pixels, for the wide row and for the tight row or the plan. */
 const BAR_W = 100
 const TIGHT_BAR_W = 60
-const LOW_AT = 15
 const TIGHT_CELLS = 6
 /** How often the band redraws, so the countdown and the warm-to-cold flip stay current. */
 const TICK_MS = 30_000
@@ -105,7 +104,7 @@ const DEFAULT_WARN_MIN = 10
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
 // window; the Agents button; then what the two optional readings need.
 const ROW_CELLS = 26
-const WINDOW_CELLS = 34
+const WINDOW_CELLS = 29
 const AGENTS_CELLS = 12
 const WARM_CELLS = 16
 const HIT_CELLS = 11
@@ -1011,11 +1010,10 @@ export const register: Register = (on, options) => {
     const forecasts = list.filter(w => outOf(w) !== null).length
 
     const parts = (w: Window) => {
-      const left = Math.max(0, Math.round((100 - w.percentUsed) * 10) / 10)
+      const used = Math.min(100, Math.max(0, Math.round(w.percentUsed * 10) / 10))
       return {
-        left,
-        used: Math.round(w.percentUsed * 10) / 10,
-        col: left < LOW_AT ? WARN : ACCENT,
+        used,
+        col: usageColour(used),
         name: NAMES[w.kind] ?? w.kind.toUpperCase(),
         reset: fmtReset(w.resetsAt, now),
         out: outOf(w),
@@ -1038,7 +1036,7 @@ export const register: Register = (on, options) => {
     const fillLabel = view && view.window > 0 ? `${tok(view.tokens)} · ${Math.round((view.tokens / view.window) * 100)}%` : null
     const windowText = (w: Window, isTight: boolean) => {
       const p = parts(w)
-      return ` ${p.left}% left${p.left < LOW_AT ? ' LOW' : ''}${p.reset ? `${isTight ? ' ' : ' · '}${p.reset}` : ''}${p.out ? ` · out ~${p.out}` : ''}`
+      return ` ${p.used}%${p.reset ? `${isTight ? ' ' : ' · '}${p.reset}` : ''}${p.out ? ` · out ~${p.out}` : ''}`
     }
 
     // Where the wide row would pass the band, it tightens first: a shorter usage bar, no dot before the
@@ -1074,27 +1072,26 @@ export const register: Register = (on, options) => {
     const cells = kind === 'tight' ? TIGHT_CELLS : CELLS
 
     // Wide: every window on one row. Narrow: each window is a block of three
-    // lines (name and dots, percent left, reset time) so nothing wraps or clips.
+    // lines (name and dots, percent used, reset time) so nothing wraps or clips.
     const wide = (w: Window, i: number) => {
       const p = parts(w)
       return (
         <Box key={`w-${i}`} flexDirection="row" flexShrink={0} alignItems="center">
           <Text color={MUTED} bold>{p.name} </Text>
-          {bar(`bar-${i}`, p.used, cells, isTight ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
-          <Text color={p.col} bold> {p.left}% left</Text>
-          {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
+          {bar(`bar-${i}`, p.used, cells, isTight ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used`)}
+          <Text color={p.col} bold>{` ${p.used}%`}</Text>
           {p.reset ? <Text color={MUTED}>{`${isTight ? ' ' : ' · '}${p.reset}`}</Text> : null}
           {p.out ? <Text color={WARN}>{` · out ~${p.out}`}</Text> : null}
         </Box>
       )
     }
 
-    // A stacked forecast joins the share left, so the block keeps its three lines, where the row has room for the wider blocks.
-    const leftCells = (w: Window) => {
+    // A stacked forecast joins the share used, so the block keeps its three lines, where the row has room for the wider blocks.
+    const shareCells = (w: Window) => {
       const p = parts(w)
-      return `${p.left}% left`.length + (p.left < LOW_AT ? 4 : 0) + (p.out ? ` · out ~${p.out}`.length : 0) + 3
+      return `${p.used}%`.length + (p.out ? ` · out ~${p.out}`.length : 0) + 3
     }
-    const rowCells = list.reduce((n, w) => n + Math.max(STACK_CELLS, leftCells(w)), 0)
+    const rowCells = list.reduce((n, w) => n + Math.max(STACK_CELLS, shareCells(w)), 0)
     const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + (agentsButton ? AGENTS_CELLS : 0)
     const isOutBeside = rowCells + besideCells <= columns
 
@@ -1104,11 +1101,10 @@ export const register: Register = (on, options) => {
         <Box key={`w-${i}`} flexDirection="column" flexShrink={0} marginRight={3}>
           <Box flexDirection="row" alignItems="center">
             <Text color={MUTED} bold>{p.name} </Text>
-            {bar(`bar-${i}`, p.used, cells, kind === 'tight' ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used, ${p.left}% left`)}
+            {bar(`bar-${i}`, p.used, cells, kind === 'tight' ? TIGHT_BAR_W : BAR_W, p.col, `${p.name} ${p.used}% used`)}
           </Box>
           <Box flexDirection="row">
-            <Text color={p.col} bold>{p.left}% left</Text>
-            {p.left < LOW_AT ? <Text color={TEXT} bold> LOW</Text> : null}
+            <Text color={p.col} bold>{`${p.used}%`}</Text>
             {p.out && isOutBeside ? <Text color={WARN}>{` · out ~${p.out}`}</Text> : null}
           </Box>
           {p.reset ? <Text color={MUTED}>resets {p.reset}</Text> : null}

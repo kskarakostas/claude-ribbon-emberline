@@ -30,7 +30,7 @@ test('a warm cache shows Robo, the WARM chip and the minutes left, folded', asyn
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
   // Drawings keep no key in the kit, so they are found by what they say.
   const alts = (await band.findAll({ type: 'Svg' })).map(s => s.props.alt)
-  expect(alts.filter(a => !String(a).endsWith('% left'))).toEqual(['Robo, bobbing', 'WARM'])
+  expect(alts.filter(a => !String(a).endsWith('% used'))).toEqual(['Robo, bobbing', 'WARM'])
   expect(await band.find({ text: ' 42m' })).toBeDefined()
   expect(await band.find({ key: 'card' })).toBeUndefined()
   expect((await band.find({ key: 'cache-fold' }))?.props.label).toBe('ⓘ')
@@ -75,9 +75,9 @@ const resumed = async ($: Engine, on: On, idle: number) => {
 }
 
 test('on the desktop a row that would pass the band stacks, forecast or not', async ($, on) => {
-  // The two windows, the fill, the warm cache and the picker come to about 104 cells at the measured widths, 92 tightened.
+  // The two windows, the fill, the warm cache and the picker come to about 95 cells at the measured widths, 83 tightened.
   await resumed($, on, WARM_IDLE)
-  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 88 } })
+  const short = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 80 } })
   expect(await short.find({ key: 'block' })).toBeDefined()
   await short.unmount()
   const room = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 108 } })
@@ -86,9 +86,9 @@ test('on the desktop a row that would pass the band stacks, forecast or not', as
 })
 
 test('an open card leaves the cache out of the row, so the row needs less room than folded', async ($, on) => {
-  // Cold, the card opens and the row carries no badge or idle time: about 87 cells, against about 112 folded.
+  // Cold, the card opens and the row carries no badge or idle time: about 78 cells, against about 102 folded, 90 tightened.
   await resumed($, on, COLD_IDLE)
-  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 95 } })
+  const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 87 } })
   expect(await band.find({ key: 'card' })).toBeDefined()
   expect(await band.find({ key: 'usage' })).toBeDefined()
   await band.press({ key: 'cache-fold' })
@@ -155,8 +155,8 @@ test('a cleared session drops the cache until the next reply', async ($, on) => 
   await $.classic.SessionStart({ source: 'clear' })
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
-  expect((await band.findAll({ type: 'Svg' })).filter(s => !String(s.props.alt).endsWith('% left'))).toEqual([])
-  expect(await band.find({ text: ' 99% left' })).toBeDefined()
+  expect((await band.findAll({ type: 'Svg' })).filter(s => !String(s.props.alt).endsWith('% used'))).toEqual([])
+  expect(await band.find({ text: ' 1%' })).toBeDefined()
   await band.unmount()
 })
 

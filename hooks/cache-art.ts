@@ -17,6 +17,16 @@ export const ACCENT = '#9fb3c8'
 export const WARN = '#d0a85c'
 export const ERROR = '#c47f7f'
 
+/** A usage limit's colour by the share used, in the band's muted shades. */
+export const USAGE_SCALE = { green: '#86b38a', yellow: '#d6c56c', orange: '#d9955a', red: '#d06b6b' } as const
+/** Where each colour starts, in percent used. PROPOSED: green under 40, yellow, orange from 70, red from 85. */
+const YELLOW_AT = 40
+const ORANGE_AT = 70
+const RED_AT = 85
+
+export const usageColour = (used: number): string =>
+  used >= RED_AT ? USAGE_SCALE.red : used >= ORANGE_AT ? USAGE_SCALE.orange : used >= YELLOW_AT ? USAGE_SCALE.yellow : USAGE_SCALE.green
+
 // The cache's two states in a muted shade, so neither pulls the eye.
 export const HUE: Record<Mode, string> = { warm: '#7fb09a', cold: '#6aaabd' }
 /** Text on a filled chip. */

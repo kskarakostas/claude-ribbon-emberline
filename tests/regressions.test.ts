@@ -3,7 +3,7 @@ import type { On, SessionRateLimit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { cardSvg, ticksSvg } from '../hooks/cache-art'
+import { cardSvg, ticksSvg, usageColour, USAGE_SCALE } from '../hooks/cache-art'
 import { contextPanelSvg } from '../hooks/context-art'
 
 import { applyPlan, etaMs } from '../hooks/plan'
@@ -398,8 +398,8 @@ test('a wide row without room keeps the tokens and drops the extras', async ($, 
   await start($, on, { rateLimits: TWO, categories: CATEGORIES })
   await reply($)
 
-  // Two windows make the row about 109 cells; the hit share would take it past 117.
-  const ui = await band($, false, 112)
+  // Two windows make the row about 101 cells; the hit share would take it past 109.
+  const ui = await band($, false, 104)
   expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
   expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(false)
@@ -411,8 +411,8 @@ test('a tightened row shows no hit share, colour bar or cost: those go before th
   await start($, on, { rateLimits: TWO, categories: CATEGORIES, cost: 18.2 })
   await reply($)
 
-  // The full row needs about 109 cells, tightened about 96; what tightening saves is not room for extras.
-  const ui = await band($, false, 106)
+  // The full row needs about 101 cells, tightened about 88; what tightening saves is not room for extras.
+  const ui = await band($, false, 98)
   expect((await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))?.props.width).toBe(60)
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
   expect((await ui.findAll({ type: 'Svg' })).some(s => String(s.props.alt).startsWith('Context mix'))).toBe(false)
@@ -936,20 +936,45 @@ test('usage and progress draw as tick bars in the app', async ($, on) => {
 
   const ui = await band($, true)
   const alts = (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.alt))
-  expect(alts).toContain('7D 64% used, 36% left')
+  expect(alts).toContain('7D 64% used')
   expect(alts).toContain('0 of 2 steps done')
   expect(await ui.find({ type: 'Text', text: /●/ })).toBeUndefined()
   await ui.unmount()
 })
 
-test('the usage bar fills with what is used, beside the share left', async ($, on) => {
+test('the usage bar fills with what is used, beside the share used, in its colour', async ($, on) => {
   await start($, on, { rateLimits: [TWO[0]!] })
   await reply($)
 
   const ui = await band($)
   const usage = (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))
-  expect(litTicks(String(usage?.props.source), '#9fb3c8')).toBe(13)
-  expect(await ui.find({ type: 'Text', text: / 36% left/ })).toBeDefined()
+  expect(litTicks(String(usage?.props.source), USAGE_SCALE.yellow)).toBe(13)
+  const share = await ui.find({ type: 'Text', text: /^ 64%$/ })
+  expect(share?.props.color).toBe(USAGE_SCALE.yellow)
+  expect(await ui.find({ type: 'Text', text: /left|LOW/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('usage colours green, then yellow from 40%, orange from 70%, red from 85%', () => {
+  expect(usageColour(0)).toBe(USAGE_SCALE.green)
+  expect(usageColour(39.9)).toBe(USAGE_SCALE.green)
+  expect(usageColour(40)).toBe(USAGE_SCALE.yellow)
+  expect(usageColour(69.9)).toBe(USAGE_SCALE.yellow)
+  expect(usageColour(70)).toBe(USAGE_SCALE.orange)
+  expect(usageColour(84.9)).toBe(USAGE_SCALE.orange)
+  expect(usageColour(85)).toBe(USAGE_SCALE.red)
+  expect(usageColour(100)).toBe(USAGE_SCALE.red)
+  expect(new Set(Object.values(USAGE_SCALE)).size).toBe(4)
+})
+
+test('a stacked window shows the share used in its colour, with no word after it', async ($, on) => {
+  await start($, on, { rateLimits: [{ kind: 'seven_day', percentUsed: 91, resetsAt: '2099-01-02T00:00:00Z' }] })
+  await reply($)
+
+  const ui = await band($, false, 36)
+  const share = await ui.find({ type: 'Text', text: /^91%$/ })
+  expect(share?.props.color).toBe(USAGE_SCALE.red)
+  expect(await ui.find({ type: 'Text', text: /left|LOW/ })).toBeUndefined()
   await ui.unmount()
 })
 

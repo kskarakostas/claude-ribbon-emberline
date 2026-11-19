@@ -9,7 +9,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 ## What it shows
 
 **The ribbon**
-- Each usage limit as a tick bar that fills as you use it, beside what's left and when it resets. When your pace would use it up before the next reset, an amber `out ~2h 30m` says when. The pace is the faster of two: the average since the limit last reset, and the last 24 hours (the last hour for the 5-hour limit), read from usage readings every session keeps. A quiet day already behind you no longer stretches the week's forecast, and a quiet morning does not hide a busy week. It waits until a tenth of the window has passed (about 17 hours of a week), so one busy stretch does not swing it.
+- Each usage limit as a tick bar that fills as you use it, beside the share used, as the app counts it, and when it resets. Bar and share turn from green to yellow at 40%, orange at 70% and red at 85%. When your pace would use it up before the next reset, an amber `out ~2h 30m` says when. The pace is the faster of two: the average since the limit last reset, and the last 24 hours (the last hour for the 5-hour limit), read from usage readings every session keeps. A quiet day already behind you no longer stretches the week's forecast, and a quiet morning does not hide a busy week. It waits until a tenth of the window has passed (about 17 hours of a week), so one busy stretch does not swing it.
 - Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
 - Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead (`ember 1h 50m`).
 - The session's running cost at list price, when the row has room.
@@ -27,7 +27,7 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.5.4` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.6.0` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 

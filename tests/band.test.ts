@@ -14,7 +14,7 @@ const PROPS = {
   view: {},
 } as const
 
-test('the band shows percent left for each window once a reading lands', async ($, on) => {
+test('the band shows percent used for each window once a reading lands', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.parse('2098-12-31T22:00:00Z') })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -30,16 +30,17 @@ test('the band shows percent left for each window once a reading lands', async (
       component: 'AbovePrompt',
       props: PROPS,
     })
-    expect(await band.find({ text: '42% left' })).toBeDefined()
-    expect(await band.find({ text: '87.5% left' })).toBeDefined()
-    // 7D (87.5% left) draws before 5H (42% left)
+    expect(await band.find({ text: /^ ?58%$/ })).toBeDefined()
+    expect(await band.find({ text: /^ ?12\.5%$/ })).toBeDefined()
+    expect(await band.find({ text: /left/ })).toBeUndefined()
+    // 7D (12.5% used) draws before 5H (58% used)
     const all = JSON.stringify(await band.find({ type: 'Box' }))
     expect(all.indexOf('7D')).toBeLessThan(all.indexOf('5H'))
     await band.unmount()
   }
 })
 
-test('in a narrow band each window stacks, with percent left and reset time on their own lines', async ($, on) => {
+test('in a narrow band each window stacks, with percent used and reset time on their own lines', async ($, on) => {
   mock.store(on)
   mock.clock(on, { now: Date.parse('2098-12-31T22:00:00Z') })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -54,7 +55,7 @@ test('in a narrow band each window stacks, with percent left and reset time on t
     component: 'AbovePrompt',
     props: { ...PROPS, bodyColumns: 36 },
   })
-  expect(await band.find({ text: '42% left' })).toBeDefined()
+  expect(await band.find({ text: '58%' })).toBeDefined()
   expect(await band.find({ text: 'resets 2h 0m' })).toBeDefined()
   await band.unmount()
 })
