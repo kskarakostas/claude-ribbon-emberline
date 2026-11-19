@@ -292,15 +292,25 @@ export const ROBO_SIZE = 20
 export const roboSvg = (mode: Mode): string => svgDoc(ROBO_SIZE, ROBO_SIZE, roboShapes(0, 0, ROBO_SIZE, mode), false)
 
 // ---------- The card, laid out for the band's width ----------
-/** Real CSS pixels: narrower than the slot, so the card shows at this size, not shrunk. */
-const CARD_W = 720
+/**
+ * The card's width in real CSS pixels, leaving the slot's right side to the settings column: about
+ * 745 px at 95 cells, less the band's padding, the column's margin and its widest picker (about 108 px).
+ */
+const CARD_W = 611
+/** The full slot, for the drawings that span it, like the models' prices. */
+const SLOT_W = 720
+/** The state section's right edge (its countdown and bar), then the cache section's columns. */
+// Measured in the embedded font: a warm idle ends by x102 and `cold in 55m` is 56 px; `~$20.00 next` is 61 px.
+const STATE_W = 165
+const CACHE_X = 195
+const CACHE_RIGHT = 327
 const CARD_H = 60
 /** The extra height of the keep-warm tally row. */
 const NOTE_H = 18
 
 /** How many recent requests the card's hit strip holds, and its size under the token count. */
 export const HITS_MAX = 20
-const HITS_X = 240
+const HITS_X = CACHE_X
 const HITS_W = 126
 const HITS_H = 8
 const HITS_BOTTOM = 58
@@ -349,16 +359,16 @@ export const pricesSvg = (v: CacheView): { source: string; w: number; h: number;
     said.push(`${m.NAME[0]}${m.NAME.slice(1).toLowerCase()} ${price}`)
   })
   const h = 56
-  return { source: svgDoc(CARD_W, h, g, true), w: CARD_W, h, alt: `Next message on each model: ${said.join(', ')}.` }
+  return { source: svgDoc(SLOT_W, h, g, true), w: SLOT_W, h, alt: `Next message on each model: ${said.join(', ')}.` }
 }
 
 /** The limits section's columns: name, bar, share, reset, run-out. */
-const LIM_X = 392
-// The bar starts clear of `SPEND`, the longest name, which ends near x428 at 10 px bold.
-const LIM_BAR_X = 432
-const LIM_BAR_W = 106
-const LIM_PCT_X = 546
-const LIM_RESET_X = 590
+// Measured in the embedded font: `SPEND` 35.6 px at 10 px bold, `100%` 26.3 px, `Wed 23:59` 52.3 px, `~13h 20m` 47.4 px.
+const LIM_X = 351
+const LIM_BAR_X = 391
+const LIM_BAR_W = 66
+const LIM_PCT_X = 465
+const LIM_RESET_X = 503
 
 export const cardSvg = (
   v: CacheView,
@@ -379,27 +389,28 @@ export const cardSvg = (
   // State and time left.
   const chip = chipShapes(0, 8, WORD[mode], hue, 11, 1)
   let g = chip.svg + t(chip.w + 10, 23, v.idle, 18, 600, TEXT)
-  g += t(208, 23, cold ? 'cold now' : held ? ember.left : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
+  // Cold, the chip says so and the idle time (as long as `20h 40m`) needs the room.
+  if (!cold) g += t(STATE_W, 23, held ? ember.left : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
   // Held, a flame stands before the time, as on the ribbon. The card cannot measure text, so the time's width is estimated.
   // shortcut: 6.3 px a character at 11 px semibold; measure if the flame overlaps or drifts from the time.
-  if (held) g += flameShapes(208 - ember.left.length * 6.3 - 4 - FLAME_W * 0.8, 12, 0.8)
-  const full = 208
+  if (held) g += flameShapes(STATE_W - ember.left.length * 6.3 - 6 - FLAME_W * 0.8, 12, 0.8)
+  const full = STATE_W
   // Held, the bar is the share of keep-warm spent; otherwise the share of the cache's life.
   const spent = cold ? full : full * Math.min(1, held ? ember.spent : v.idleMin / v.ttlMin)
   g += `<rect x="0" y="40" width="${full}" height="3" rx="1.5" fill="${EMPTY}"/><rect x="0" y="40" width="${spent}" height="3" rx="1.5" fill="${hue}"/>`
   if (held) g += t(0, 56, `cold about ${ember.coldAt}`, 10, 500, MUTED)
-  g += vline(224)
+  g += vline(STATE_W + 14)
 
   // The conversation's size.
   const share = v.window > 0 ? Math.round((v.tokens / v.window) * 100) : 0
-  g += t(240, 18, cold ? 'RE-CACHE' : 'IN CACHE', 11, 700, MUTED, 'start', 1.2)
+  g += t(CACHE_X, 18, cold ? 'RE-CACHE' : 'IN CACHE', 11, 700, MUTED, 'start', 1.2)
   // The session's own next-message price stays in view; every model's folds under the context table.
   const price = ownPrice(v)
-  if (price) g += t(366, 18, `${price} next`, 10, 600, TEXT, 'end')
-  g += t(240, 44, tok(v.tokens), 20, 600, TEXT) + t(296, 44, `${share}% of ${tok(v.window)}`, 11, 500, MUTED)
+  if (price) g += t(CACHE_RIGHT, 18, `${price} next`, 10, 600, TEXT, 'end')
+  g += t(CACHE_X, 44, tok(v.tokens), 20, 600, TEXT) + t(CACHE_X + 56, 44, `${share}% of ${tok(v.window)}`, 11, 500, MUTED)
   const strip = hitStrip(hits.slice(-HITS_MAX))
   g += strip.svg
-  g += vline(376)
+  g += vline(CACHE_RIGHT + 10)
 
   // Each usage limit: its bar against where an even pace would be, the share used, when it resets, when it runs out.
   g += t(LIM_X, 18, 'USAGE LIMITS', 11, 700, MUTED, 'start', 1.2)

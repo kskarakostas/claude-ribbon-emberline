@@ -1416,7 +1416,7 @@ export const register: Register = (on, options) => {
       const shown = await read($, version)
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
-          <Box key="context-row" flexDirection="row" alignItems="flex-start">
+          <Box key="context-row" flexDirection="row" alignItems="center">
             <Box key="context-fold-box" flexShrink={0}>
               <Button key="context-fold" label={isContextOpen ? '▾' : '▸'} plain dimColor onPress={() => update($, contextOpen, o => !o)} />
             </Box>
@@ -1425,19 +1425,28 @@ export const register: Register = (on, options) => {
           </Box>
           {table ? <Svg key="context-table" source={table.source} alt={table.alt} /> : null}
           {prices ? <Svg key="prices" source={prices.source} alt={prices.alt} /> : null}
-          <Svg key="cache-card" source={c.source} alt={c.alt} />
-          <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
-            {Select
-              ? null
-              : [
-                  <Button key="m-ember" label={`Ember ${capValue} ▸`} onPress={() => pickWarm($, nextEmber(capMs), guard, inTurn)} />,
-                  <Button key="m-ping" label="Ping now" onPress={() => pickWarm($, PING_PICK, guard, inTurn)} />,
-                  <Button key="m-status" label="Status" onPress={() => pickWarm($, STATUS_PICK, guard, inTurn)} />,
-                ]}
-            {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
-            {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
-            {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
+          {/* Where there is a picker (desktop, VS Code) the settings stack in a column beside the card, which
+              leaves room below them for more controls; mobile, narrower and without pickers, keeps its row under it. */}
+          <Box key="card-row" flexDirection="row" alignItems="flex-start">
+            <Svg key="cache-card" source={c.source} alt={c.alt} />
+            {Select ? (
+              <Box key="expanded" flexDirection="column" flexShrink={0} marginLeft={1}>
+                {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
+                {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
+                {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
+              </Box>
+            ) : null}
           </Box>
+          {Select ? null : (
+            <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
+              <Button key="m-ember" label={`Ember ${capValue} ▸`} onPress={() => pickWarm($, nextEmber(capMs), guard, inTurn)} />
+              <Button key="m-ping" label="Ping now" onPress={() => pickWarm($, PING_PICK, guard, inTurn)} />
+              <Button key="m-status" label="Status" onPress={() => pickWarm($, STATUS_PICK, guard, inTurn)} />
+              {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
+              {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
+              {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
+            </Box>
+          )}
         </Box>
       )
     }

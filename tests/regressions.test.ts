@@ -541,7 +541,7 @@ test('the panel draws no Other when every category shows', async () => {
 test('the details are short enough to fit together', async () => {
   const card = cardSvg({ mode: 'warm', idle: '1m', idleMin: 1, tokens: 358_000, window: 1_000_000, mine: 'opus' })
   expect(contextPanelSvg(MIX).h + card.h).toBeLessThan(160)
-  expect(card.w).toBe(720)
+  expect(card.w).toBe(611) // the settings column takes the rest of the slot
 })
 
 test('the details drawings set no height, so they take the height they are drawn at', async ($, on) => {
@@ -1294,6 +1294,37 @@ test('the card shows each usage limit: its bar against an even-pace mark, share 
   expect(textsOf(cardSvg(view).source)).toContain('No usage reading yet')
 })
 
+test('a cold card shows no countdown text: the chip says cold and the idle time takes the room', () => {
+  const view = { mode: 'cold', idle: '20h 40m', idleMin: 1240, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const texts = textsOf(cardSvg(view).source)
+  expect(texts).toContain('20h 40m')
+  expect(texts).not.toContain('cold now')
+})
+
+test('the card keeps every drawn part inside its width', async () => {
+  const view = { mode: 'cold', idle: '2h', idleMin: 120, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
+  const card = cardSvg(view, null, null, [50, 90], LIMITS)
+  const xs = [...card.source.matchAll(/<(?:text|rect) [^>]*?x="([\d.]+)"/g)].map(m => Number(m[1]))
+  expect(Math.max(...xs)).toBeLessThanOrEqual(card.w)
+  expect(card.source).toContain(`width="${card.w}"`)
+})
+
+test('on the desktop Warn and Auto stack in a column beside the card; mobile keeps its row; the triangle centres on the bar', async ($, on) => {
+  await start($, on, { rateLimits: TWO, categories: CATEGORIES })
+  await reply($)
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  expect((await ui.find({ key: 'expanded' }))?.props.flexDirection).toBe('column')
+  expect((await ui.find({ key: 'card-row' }))?.props.flexDirection).toBe('row')
+  expect((await ui.find({ key: 'context-row' }))?.props.alignItems).toBe('center')
+  await ui.unmount()
+
+  // Still open: the fold is one choice across surfaces.
+  const phone = await $.ui.mount({ plugin: 'emberline', surface: 'mobile', component: 'AbovePrompt', props: props(false, 120) })
+  expect((await phone.find({ key: 'expanded' }))?.props.flexDirection).toBe('row')
+  await phone.unmount()
+})
+
 test('the models\' prices draw on their own, for the fold', async () => {
   const view = { mode: 'cold', idle: '2h', idleMin: 120, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
   const prices = pricesSvg(view)
@@ -1313,7 +1344,7 @@ test('three limits fit the card, the text and mark of the third row inside its h
   const view = { mode: 'warm', idle: '1m', idleMin: 1, tokens: 300_000, window: 1_000_000, mine: 'opus', model: 'claude-opus-5-5', ttlMin: 60 } as const
   const three = [...LIMITS, { name: 'SPEND', used: 10, colour: USAGE_SCALE.green, resets: '', out: null, evenShare: 0.3 }]
   const card = cardSvg(view, null, null, [], three)
-  const ys = [...card.source.matchAll(/<text x="392" y="(\d+(?:\.\d+)?)"[^>]*>(7D|5H|SPEND)</g)].map(m => Number(m[1]))
+  const ys = [...card.source.matchAll(/<text x="\d+" y="(\d+(?:\.\d+)?)"[^>]*>(7D|5H|SPEND)</g)].map(m => Number(m[1]))
   expect(ys.length).toBe(3)
   expect(Math.max(...ys)).toBeLessThanOrEqual(card.h - 3)
   const marks = [...card.source.matchAll(/class="even" x="[^"]+" y="([\d.]+)" width="1.5" height="(\d+)"/g)].map(m => Number(m[1]) + Number(m[2]))
