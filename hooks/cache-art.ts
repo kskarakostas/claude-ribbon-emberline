@@ -248,9 +248,16 @@ const FLAME_CORE = '#f2c56b'
  * Lit, an ember-orange flame with a yellow core; `isMoving`, it flickers from its base, as
  * Robo bobs. Unlit, a dim grey shape, still.
  */
+const FLAME_OUTER = 'M5.5 0.6C6.6 3.2 10.4 5.6 10.4 9.8A4.9 4.9 0 0 1 0.6 9.8C0.6 7.2 2.2 5.6 3.2 3.9C3.7 5.3 4.3 6.1 5.1 6.6C5.1 4.6 4.7 2.6 5.5 0.6Z'
+const FLAME_INNER = 'M5.5 7.6C6.5 9 7.6 10 7.6 11.6A2.1 2.1 0 0 1 3.4 11.6C3.4 10 4.5 9 5.5 7.6Z'
+
+/** A still, lit flame inside another drawing, top-left at x, y, scaled from its FLAME_W by FLAME_H box. */
+const flameShapes = (x: number, y: number, scale: number): string =>
+  `<g transform="translate(${x} ${y}) scale(${scale})"><path d="${FLAME_OUTER}" fill="${FLAME}"/><path d="${FLAME_INNER}" fill="${FLAME_CORE}"/></g>`
+
 export const flameSvg = (isLit: boolean, isMoving: boolean): string => {
-  const outer = 'M5.5 0.6C6.6 3.2 10.4 5.6 10.4 9.8A4.9 4.9 0 0 1 0.6 9.8C0.6 7.2 2.2 5.6 3.2 3.9C3.7 5.3 4.3 6.1 5.1 6.6C5.1 4.6 4.7 2.6 5.5 0.6Z'
-  const core = 'M5.5 7.6C6.5 9 7.6 10 7.6 11.6A2.1 2.1 0 0 1 3.4 11.6C3.4 10 4.5 9 5.5 7.6Z'
+  const outer = FLAME_OUTER
+  const core = FLAME_INNER
   if (!isLit) return svgDoc(FLAME_W, FLAME_H, `<path d="${outer}" fill="${MUTED}" fill-opacity=".55"/>`, false)
   const flicker = isMoving
     ? '<animateTransform attributeName="transform" type="scale" values="1 1;0.93 1.07;1.04 0.95;0.97 1.04;1 1" dur="1.1s" repeatCount="indefinite"/>'
@@ -318,7 +325,10 @@ export const cardSvg = (
   // State and time left.
   const chip = chipShapes(0, 8, WORD[mode], hue, 11, 1)
   let g = chip.svg + t(chip.w + 10, 23, v.idle, 18, 600, TEXT)
-  g += t(208, 23, cold ? 'cold now' : held ? `ember ${ember.left}` : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
+  g += t(208, 23, cold ? 'cold now' : held ? ember.left : `cold in ${left}m`, 11, 600, HUE.cold, 'end')
+  // Held, a flame stands before the time, as on the ribbon. The card cannot measure text, so the time's width is estimated.
+  // shortcut: 6.3 px a character at 11 px semibold; measure if the flame overlaps or drifts from the time.
+  if (held) g += flameShapes(208 - ember.left.length * 6.3 - 4 - FLAME_W * 0.8, 12, 0.8)
   const full = 208
   // Held, the bar is the share of keep-warm spent; otherwise the share of the cache's life.
   const spent = cold ? full : full * Math.min(1, held ? ember.spent : v.idleMin / v.ttlMin)

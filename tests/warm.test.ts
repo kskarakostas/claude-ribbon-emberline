@@ -201,6 +201,10 @@ test('the open card counts down Ember and says when the cache will go cold', asy
   const clockText = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
   expect(card).toContain(`Ember holds it for 50m more, then it goes cold about ${clockText}`)
   expect(card).not.toContain('Goes cold in')
+  // The drawing shows a flame and the time, as the ribbon does; the alt above keeps the words.
+  expect(card).not.toContain('>ember ')
+  expect(card).toContain('>50m</text>')
+  expect(card).toContain('#e08a4f') // the flame
   await ui.unmount()
 })
 
