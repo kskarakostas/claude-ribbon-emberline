@@ -35,6 +35,8 @@ const TICK_MS = 30_000
 const windows = atom({ plugin: 'emberline', key: 'windows' } as const, [] as Window[])
 const cache = atom({ plugin: 'emberline', key: 'cache' } as const, null as CacheFacts | null)
 const fold = atom({ plugin: 'emberline', key: 'fold' } as const, null as Fold | null)
+/** Whether the expanded view shows the context table, or the context bar alone. */
+const contextOpen = atom({ plugin: 'emberline', key: 'contextOpen' } as const, false)
 
 const plan = atom({ plugin: 'emberline', key: 'plan' } as const, null as Plan | null)
 const agents = atom({ plugin: 'emberline', key: 'agents' } as const, [] as AgentRun[])
@@ -141,6 +143,10 @@ const COUNTDOWN_CELLS = 4
 const STEP_CELLS = 34
 /** The `  │  ` between the plan step and the upper row. */
 const SEP_CELLS = 5
+/** The card's width, which the context row shares with its triangle. */
+const CARD_PX = 720
+// shortcut: the triangle button's width on the desktop is estimated, not measured; measure it if the context row wraps.
+const CONTEXT_FOLD_PX = 28
 
 const NAMES: Record<string, string> = { seven_day: '7D', five_hour: '5H', spend_limit: 'SPEND' }
 const ORDER: Record<string, number> = { seven_day: 0, five_hour: 1 }
@@ -1382,7 +1388,11 @@ export const register: Register = (on, options) => {
           `. Last ping ${fmtClock(tally.lastAt)} read ${tok(tally.lastServed)}.`
         : null
       const c = cardSvg(view, emberView, note, await read($, hits))
-      const panel = composition && composition.rows.length > 0 ? contextPanelSvg(composition) : null
+      const isContextOpen = await read($, contextOpen)
+      const hasMix = composition !== null && composition.rows.length > 0
+      // The header shares its line with the triangle; the table below keeps the card's full width.
+      const panel = hasMix ? contextPanelSvg(composition, { part: 'header', width: CARD_PX - CONTEXT_FOLD_PX }) : null
+      const table = hasMix && isContextOpen ? contextPanelSvg(composition, { part: 'table' }) : null
       // What the folded row has no room for: the settings, and on
       // mobile, which draws no picker, the whole Ember menu. A picker where there is one, else a
       // button that steps to the next value.
@@ -1399,7 +1409,15 @@ export const register: Register = (on, options) => {
       const shown = await read($, version)
       card = (
         <Box key="card" flexDirection="column" paddingX={1}>
-          {panel ? <Svg key="context" source={panel.source} alt={panel.alt} /> : null}
+          {panel ? (
+            <Box key="context-row" flexDirection="row" alignItems="flex-start">
+              <Box key="context-fold-box" flexShrink={0}>
+                <Button key="context-fold" label={isContextOpen ? '▾' : '▸'} plain dimColor onPress={() => update($, contextOpen, o => !o)} />
+              </Box>
+              <Svg key="context" source={panel.source} alt={panel.alt} />
+            </Box>
+          ) : null}
+          {table ? <Svg key="context-table" source={table.source} alt={table.alt} /> : null}
           <Svg key="cache-card" source={c.source} alt={c.alt} />
           <Box key="expanded" flexDirection="row" flexWrap="wrap" alignItems="center" columnGap={2}>
             {Select

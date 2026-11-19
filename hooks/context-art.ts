@@ -23,27 +23,44 @@ const count = (n: number): string => (n < 1000 ? String(n) : tok(n))
 const colourOf = (i: number): string => MIX[i % MIX.length]!
 const listOf = (mix: ContextMix): string => mix.rows.map(r => `${r.name} ${count(r.tokens)}`).join(', ')
 
-/** The panel behind the details icon: one bar of the window, then a table of what fills it. */
-export const contextPanelSvg = (mix: ContextMix): { source: string; w: number; h: number; alt: string } => {
-  const W = PANEL_W
+/** The header's one row: the label, the bar and the total. */
+const HEADER_H = 24
+
+/**
+ * The panel behind the details icon: one bar of the window, then a table of what fills it. `part` draws
+ * the header row alone (its alt names every category) or the table alone, so the header can share its
+ * line with a control while the table keeps the full width; `width` sets the drawing's width.
+ */
+export const contextPanelSvg = (
+  mix: ContextMix,
+  { part = 'all', width = PANEL_W }: { part?: 'all' | 'header' | 'table'; width?: number } = {},
+): { source: string; w: number; h: number; alt: string } => {
+  const W = width
   const used = mix.rows.reduce((n, r) => n + r.tokens, 0)
   const shareOf = (tokens: number) => (used > 0 ? Math.round((tokens / used) * 100) : 0)
   const t = (x: number, y: number, s: string, fill: string, size: number, weight: number, anchor = 'start', ls = 0) =>
     `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" letter-spacing="${ls}" text-anchor="${anchor}">${s}</text>`
 
-  let g = t(0, 18, 'CONTEXT', MUTED, 11, 700, 'start', 1.2)
-  const pct = mix.window > 0 ? Math.round((used / mix.window) * 100) : 0
-  g += t(W, 18, `${tok(used)} of ${tok(mix.window)} · ${pct}%`, TEXT, 12, 600, 'end')
+  let g = ''
+  if (part !== 'table') {
+    g += t(0, 18, 'CONTEXT', MUTED, 11, 700, 'start', 1.2)
+    const pct = mix.window > 0 ? Math.round((used / mix.window) * 100) : 0
+    g += t(W, 18, `${tok(used)} of ${tok(mix.window)} · ${pct}%`, TEXT, 12, 600, 'end')
 
-  const barW = W - BAR_X - BAR_RIGHT
-  let x = 0
-  let segments = `<rect width="${barW}" height="${BAR_H}" fill="${EMPTY}"/>`
-  mix.rows.forEach((r, i) => {
-    const w = mix.window > 0 ? (r.tokens / mix.window) * barW : 0
-    segments += `<rect x="${x.toFixed(2)}" width="${w.toFixed(2)}" height="${BAR_H}" fill="${colourOf(i)}"/>`
-    x += w
-  })
-  g += `<clipPath id="p"><rect width="${barW}" height="${BAR_H}" rx="3"/></clipPath><g transform="translate(${BAR_X} 10)" clip-path="url(#p)">${segments}</g>`
+    const barW = W - BAR_X - BAR_RIGHT
+    let x = 0
+    let segments = `<rect width="${barW}" height="${BAR_H}" fill="${EMPTY}"/>`
+    mix.rows.forEach((r, i) => {
+      const w = mix.window > 0 ? (r.tokens / mix.window) * barW : 0
+      segments += `<rect x="${x.toFixed(2)}" width="${w.toFixed(2)}" height="${BAR_H}" fill="${colourOf(i)}"/>`
+      x += w
+    })
+    g += `<clipPath id="p"><rect width="${barW}" height="${BAR_H}" rx="3"/></clipPath><g transform="translate(${BAR_X} 10)" clip-path="url(#p)">${segments}</g>`
+  }
+  const alt = part === 'table' ? 'Context table: the categories named above' : `Context panel: ${listOf(mix)}`
+  if (part === 'header') return { source: svgDoc(W, HEADER_H, g, true), w: W, h: HEADER_H, alt }
+  // The table alone starts where the header would have ended.
+  const top = part === 'table' ? TABLE_TOP - HEADER_H : TABLE_TOP
 
   // Largest first, down each column. Anything that rounds to 0% folds into Other.
   const coloured = mix.rows.map((r, i) => ({ ...r, colour: colourOf(i) })).sort((a, b) => b.tokens - a.tokens)
@@ -55,15 +72,15 @@ export const contextPanelSvg = (mix: ContextMix): { source: string; w: number; h
   const cell = (W - GUTTER * (TABLE_COLUMNS - 1)) / TABLE_COLUMNS
   rows.forEach((r, i) => {
     const cx = Math.floor(i / perColumn) * (cell + GUTTER)
-    const y = TABLE_TOP + (i % perColumn) * TABLE_ROW
+    const y = top + (i % perColumn) * TABLE_ROW
     const share = shareOf(r.tokens)
     g += `<circle cx="${cx + 4}" cy="${y - 4}" r="4" fill="${r.colour}"/>`
     g += t(cx + 14, y, label(r.name), TEXT, 12, 500)
     g += t(cx + cell - 34, y, count(r.tokens), TEXT, 12, 600, 'end')
     g += t(cx + cell, y, share > 0 ? `${share}%` : '&lt;1%', MUTED, 12, 500, 'end')
   })
-  const h = TABLE_TOP + perColumn * TABLE_ROW - 8
-  return { source: svgDoc(W, h, g, true), w: W, h, alt: `Context panel: ${listOf(mix)}` }
+  const h = top + perColumn * TABLE_ROW - 8
+  return { source: svgDoc(W, h, g, true), w: W, h, alt }
 }
 
 export const MINI_W = 72

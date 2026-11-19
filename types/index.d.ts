@@ -82,6 +82,8 @@ declare module 'claude-code' {
       windows: Window[]
       cache: CacheFacts | null
       fold: Fold | null
+      /** The expanded view shows the context table, not the bar alone. */
+      contextOpen: boolean
       plan: Plan | null
       agents: AgentRun[]
       tools: ToolRun[]

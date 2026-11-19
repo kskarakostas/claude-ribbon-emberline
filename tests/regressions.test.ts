@@ -500,6 +500,39 @@ test('the panel folds categories under 1% into Other', async () => {
   expect(texts).toContain('2k')
 })
 
+test('folded, the panel draws only its bar and total, a row high; the alt keeps every category', async () => {
+  const folded = contextPanelSvg(MIX, { part: 'header' })
+  const texts = textsOf(folded.source)
+  expect(texts).toContain('CONTEXT')
+  expect(texts).not.toContain('Messages')
+  expect(folded.h).toBeLessThan(30)
+  expect(folded.alt).toBe(contextPanelSvg(MIX).alt)
+  expect(contextPanelSvg(MIX, { part: 'header', width: 690 }).w).toBe(690)
+  // The table alone keeps the full width, so its cells match the whole panel's.
+  const table = contextPanelSvg(MIX, { part: 'table' })
+  expect(table.w).toBe(contextPanelSvg(MIX).w)
+  expect(textsOf(table.source)).toContain('Messages')
+  expect(textsOf(table.source)).not.toContain('CONTEXT')
+})
+
+test('the expanded view starts with the context folded; the triangle opens its table and folds it again', async ($, on) => {
+  await start($, on, { categories: CATEGORIES })
+  await reply($)
+  const ui = await band($)
+  await ui.press({ key: 'cache-fold' })
+  const drawn = async () => (await ui.findAll({ type: 'Svg' })).map(s => String(s.props.source)).join('')
+  expect(textsOf(await drawn())).toContain('CONTEXT')
+  expect(textsOf(await drawn())).not.toContain('Messages')
+  expect((await ui.find({ key: 'context-fold' }))?.props.label).toBe('▸')
+
+  await ui.press({ key: 'context-fold' })
+  expect(textsOf(await drawn())).toContain('Messages')
+  expect((await ui.find({ key: 'context-fold' }))?.props.label).toBe('▾')
+  await ui.press({ key: 'context-fold' })
+  expect(textsOf(await drawn())).not.toContain('Messages')
+  await ui.unmount()
+})
+
 test('the panel draws no Other when every category shows', async () => {
   const texts = textsOf(contextPanelSvg({ window: 1000, rows: MIX.rows.slice(0, 3) }).source)
   expect(texts).not.toContain('Other')
