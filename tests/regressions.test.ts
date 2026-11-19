@@ -691,17 +691,17 @@ test('a subagent ending refreshes the background list mid-turn', async ($, on) =
   await ui.unmount()
 })
 
-test('background work counts second on the Run button, and lights it', async ($, on) => {
+test('background work counts second on the Act button, and lights it', async ($, on) => {
   await start($, on, { rateLimits: TWO })
   await reply($)
   let ui = await band($)
-  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Run 0·0')
+  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Act 0·0')
   await ui.unmount()
 
   await stop($, [SHELL, { ...SHELL, id: 'b2', description: 'Lint' }])
   ui = await band($)
   const button = await ui.find({ key: 'agents-toggle' })
-  expect(button?.text).toBe('Run 0·2') // subagents first, background tasks second
+  expect(button?.text).toBe('Act 0·2') // subagents first, background tasks second
   expect(button?.props.label).toBe('Running: 0 subagents, 2 background tasks')
   expect(button?.props.dimColor).toBe(false)
   await ui.unmount()
@@ -745,7 +745,7 @@ test('the Running panel heads subagents and background tasks apart, each with it
   await pane.unmount()
 })
 
-test('the Run button reads pressed while its panel is open, however the panel closes', async ($, on) => {
+test('the Act button reads pressed while its panel is open, however the panel closes', async ($, on) => {
   const { panes, redraws } = await start($, on)
   await reply($)
   await stop($, [SHELL])
@@ -771,7 +771,7 @@ test('the Run button reads pressed while its panel is open, however the panel cl
   expect(await pressed()).toBeUndefined()
 })
 
-test('a narrow band draws the Run button as its counts alone', async ($, on) => {
+test('a narrow band draws the Act button as its counts alone', async ($, on) => {
   await start($, on, { rateLimits: TWO })
   for (const columns of [36, 53]) {
     const waiting = await band($, false, columns)
@@ -1066,20 +1066,20 @@ test('the tokens stay on the ribbon at the width the app really uses, with agent
   await ui.unmount()
 })
 
-test('the Run button counts running subagents first, lit while they run and dimmed after', async ($, on) => {
+test('the Act button counts running subagents first, lit while they run and dimmed after', async ($, on) => {
   await start($, on)
   await reply($)
   const ui = await band($)
   expect((await ui.find({ key: 'agents-toggle' }))?.props.dimColor).toBe(true)
 
   await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
-  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Run 1·0')
+  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Act 1·0')
   expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 1 subagent, 0 background tasks')
   expect((await ui.find({ key: 'agents-toggle' }))?.props.dimColor).toBe(false)
 
   await end($, 'answer', 'a1')
   const after = await ui.find({ key: 'agents-toggle' })
-  expect(after?.text).toBe('Run 0·0')
+  expect(after?.text).toBe('Act 0·0')
   expect(after?.props.label).toBe('Running: 0 subagents, 0 background tasks')
   expect(after?.props.dimColor).toBe(true)
   await ui.unmount()

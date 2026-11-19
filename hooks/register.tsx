@@ -102,7 +102,7 @@ const WARN_TOKENS = 100_000
 const DEFAULT_WARN_MIN = 10
 
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
-// window; the Run button; then what the two optional readings need.
+// window; the Act button; then what the two optional readings need.
 const ROW_CELLS = 26
 const WINDOW_CELLS = 29
 const WARM_CELLS = 16
@@ -984,11 +984,11 @@ export const register: Register = (on, options) => {
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
     const bgRuns = await read($, background)
-    // The Run button, always on the ribbon as a banner of what runs: running subagents first, background
-    // tasks second (`Run 1·2`). Dimmed at 0·0, drawn as pressed while its panel is open.
+    // The Act button, always on the ribbon as a banner of what runs: running subagents first, background
+    // tasks second (`Act 1·2`). Dimmed at 0·0, drawn as pressed while its panel is open.
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
     const counts = `${runningAgents}·${bgRuns.length}`
-    const agentsText = `Run ${counts}`
+    const agentsText = `Act ${counts}`
     /** What a tight row draws on the button. */
     const tightAgents = counts
     /** What a screen reader announces, the two counts named. */
@@ -1009,7 +1009,7 @@ export const register: Register = (on, options) => {
     )
     // A narrow band draws the counts alone, as a tight row does.
     const agentsButton = agentsButtonOf(kindOf(columns) !== 'wide')
-    /** The terminal's estimate of the button on a wide row, `[ Run 1·2 ]`, and on a stacked one, `[ 1·2 ]`. */
+    /** The terminal's estimate of the button on a wide row, `[ Act 1·2 ]`, and on a stacked one, `[ 1·2 ]`. */
     const agentsCells = agentsText.length + 4
     const stackedAgentsCells = tightAgents.length + 4
 
@@ -1121,7 +1121,7 @@ export const register: Register = (on, options) => {
     }
 
     // Where the wide row would pass the band, it tightens first: a shorter usage bar, no dot before the
-    // reset, 1·2 for the Run button. Past that, the cache stacks. A drawn surface sums what the row shows at its
+    // reset, 1·2 for the Act button. Past that, the cache stacks. A drawn surface sums what the row shows at its
     // measured widths, hit share left out (it shows only with room to spare). The terminal keeps its
     // estimates, never tightens, and stacks only for forecasts.
     const textW = (text: string) => text.length * DRAWN_TEXT

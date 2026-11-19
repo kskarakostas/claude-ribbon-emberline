@@ -57,7 +57,7 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
   await spawn($)
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Run 1·0')
+  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Act 1·0')
   expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Running: 1 subagent, 0 background tasks')
   await band.unmount()
 
@@ -66,12 +66,12 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
   await ui.unmount()
 })
 
-test('with nothing run the button still shows, Run 0·0, dimmed', async ($, on) => {
+test('with nothing run the button still shows, Act 0·0, dimmed', async ($, on) => {
   await start($, on)
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
   const button = await band.find({ key: 'agents-toggle' })
-  expect(button?.text).toBe('Run 0·0')
+  expect(button?.text).toBe('Act 0·0')
   expect(button?.props.label).toBe('Running: 0 subagents, 0 background tasks')
   expect(button?.props.dimColor).toBe(true)
   await band.unmount()
@@ -152,7 +152,7 @@ test('/clear empties the Running panel and sets its button back to 0: a new conv
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Run 0·0')
+  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Act 0·0')
   await band.unmount()
   const ui = await pane($)
   expect(await ui.find({ text: /No subagents or background tasks yet/ })).toBeDefined()
