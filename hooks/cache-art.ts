@@ -238,6 +238,35 @@ export const roboShapes = (x: number, y: number, size: number, mode: Mode): stri
   return s + '</g>'
 }
 
+// ---------- The keep-warm flame: in place of the word Ember where the surface draws ----------
+export const FLAME_W = 11
+export const FLAME_H = 15
+const FLAME = '#e08a4f'
+const FLAME_CORE = '#f2c56b'
+
+/**
+ * Lit, an ember-orange flame with a yellow core; `isMoving`, it flickers from its base, as
+ * Robo bobs. Unlit, a dim grey shape, still.
+ */
+export const flameSvg = (isLit: boolean, isMoving: boolean): string => {
+  const outer = 'M5.5 0.6C6.6 3.2 10.4 5.6 10.4 9.8A4.9 4.9 0 0 1 0.6 9.8C0.6 7.2 2.2 5.6 3.2 3.9C3.7 5.3 4.3 6.1 5.1 6.6C5.1 4.6 4.7 2.6 5.5 0.6Z'
+  const core = 'M5.5 7.6C6.5 9 7.6 10 7.6 11.6A2.1 2.1 0 0 1 3.4 11.6C3.4 10 4.5 9 5.5 7.6Z'
+  if (!isLit) return svgDoc(FLAME_W, FLAME_H, `<path d="${outer}" fill="${MUTED}" fill-opacity=".55"/>`, false)
+  const flicker = isMoving
+    ? '<animateTransform attributeName="transform" type="scale" values="1 1;0.93 1.07;1.04 0.95;0.97 1.04;1 1" dur="1.1s" repeatCount="indefinite"/>'
+    : ''
+  const glow = isMoving ? '<animate attributeName="opacity" values="1;0.7;1;0.85;1" dur="0.8s" repeatCount="indefinite"/>' : ''
+  // Scaled about the base, so the flame stays seated and only its tip moves.
+  return svgDoc(
+    FLAME_W,
+    FLAME_H,
+    `<g transform="translate(5.5 14.6)"><g>${flicker}<g transform="translate(-5.5 -14.6)">` +
+      `<path d="${outer}" fill="${FLAME}"/><path d="${core}" fill="${FLAME_CORE}">${glow}</path>` +
+      '</g></g></g>',
+    false,
+  )
+}
+
 /** Robo beside the chip in the band's row. */
 export const ROBO_SIZE = 20
 export const roboSvg = (mode: Mode): string => svgDoc(ROBO_SIZE, ROBO_SIZE, roboShapes(0, 0, ROBO_SIZE, mode), false)

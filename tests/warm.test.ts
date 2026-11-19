@@ -137,14 +137,21 @@ test('while Ember holds, the band counts down Ember, then hands back to the cach
   await command($, '2h')
 
   await clock.advance(70 * MIN)
+  // In the app a flame stands for the word; the terminal keeps it.
   const ui = await band($)
-  expect(await ui.find({ text: ' ember 50m' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^ \d+m$/ })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Svg' })).some(s => s.props.alt === 'Keep-warm holding')).toBe(true)
+  expect(await ui.find({ type: 'Text', text: ' 50m' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /ember/ })).toBeUndefined()
   await ui.unmount()
 
   const stacked = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: { ...PROPS, bodyColumns: 53 } })
-  expect(await stacked.find({ text: 'ember 50m' })).toBeDefined()
+  expect((await stacked.findAll({ type: 'Svg' })).some(s => s.props.alt === 'Keep-warm holding')).toBe(true)
+  expect(await stacked.find({ type: 'Text', text: ' 50m' })).toBeDefined()
   await stacked.unmount()
+
+  const term = await $.ui.mount({ plugin: 'emberline', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  expect(await term.find({ text: ' ember 50m' })).toBeDefined()
+  await term.unmount()
 
   // Past the cap no ping comes, so the cache hour is the true countdown again.
   await clock.advance(55 * MIN)
@@ -728,7 +735,7 @@ test('the band picker sets the time and switches it off', async ($, on) => {
 
   const ui = await band($)
   const pick = await ui.find({ key: 'warm-pick' })
-  expect(pick?.props.label).toBe('Ember')
+  expect(pick?.props.label).toBeUndefined() // a flame names it in the app
   expect(pick?.props.value).toBe('off')
   const values = (pick?.props.options as { value: string }[]).map(o => o.value)
   expect(values.slice(0, 5)).toEqual(['off', '1h', '2h', '6h', '12h'])
@@ -765,6 +772,28 @@ test('the picker shows a time set by command', async ($, on) => {
   expect(pick?.props.value).toBe('3h')
   expect((pick?.props.options as { value: string }[]).some(o => o.value === '3h')).toBe(true)
   await ui.unmount()
+})
+
+test('the picker flame is dim and still while keep-warm is off, lit and flickering while it is on', async ($, on) => {
+  await start($, on)
+  await reply($)
+
+  const ui = await band($)
+  const flame = async () => (await ui.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('Ember keep-warm'))
+  expect((await flame())?.props.alt).toBe('Ember keep-warm, off')
+  expect(String((await flame())?.props.source)).not.toContain('<animate')
+  await ui.select({ key: 'warm-pick', value: '2h' })
+  expect((await flame())?.props.alt).toBe('Ember keep-warm, on')
+  expect(String((await flame())?.props.source)).toContain('<animateTransform') // the flicker from its base
+  expect((await flame())?.props.isInteractive).toBe(true) // the desktop runs SMIL only in an interactive frame
+  // The countdown's flame stays still beside it: one moving flame is enough.
+  await ui.unmount()
+
+  // The terminal draws no pictures: its picker keeps the word.
+  const term = await $.ui.mount({ plugin: 'emberline', surface: 'terminal', component: 'AbovePrompt', props: PROPS })
+  expect((await term.find({ key: 'warm-pick' }))?.props.label).toBe('Ember')
+  expect((await term.findAll({ type: 'Svg' })).length).toBe(0)
+  await term.unmount()
 })
 
 test('a surface with no picker gets the on and off button', async ($, on) => {

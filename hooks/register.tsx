@@ -10,7 +10,7 @@ import { noteReading, runOutAt } from './pace'
 import type { AgentRun, AgentStatus, BackgroundRun, CacheFacts, ContextMix, Fold, Ledger, PaceLog, PingRecord, Plan, ToolRun, Warm, Window } from '../types'
 import {
   ACCENT, EMPTY, ERROR, HUE, INK, MUTED, ROBO_SIZE, TEXT, ticksSvg, tok, TTL_MS, WARN, WORD,
-  cardSvg, chipSvg, familyOf, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usageColour, usd,
+  cardSvg, chipSvg, familyOf, FLAME_H, FLAME_W, flameSvg, fmtClock, fmtIdle, HIT_LOW_AT, HITS_MAX, kindOf, nextCost, roboSvg, usageColour, usd,
 } from './cache-art'
 import type { CacheView, EmberView } from './cache-art'
 
@@ -127,6 +127,11 @@ const DRAWN_TEXT = 0.82
 const DRAWN_SEP = 3.2
 /** The Ember picker less its value's text: label, gap, the box with its chevron, and the margin after it. */
 const DRAWN_PICKER = 12.2
+/** The flame that stands for the word Ember where the surface draws, with the space before it. */
+const DRAWN_FLAME = FLAME_W / DRAWN_PX + DRAWN_TEXT
+// shortcut: the flame picker's width is the measured word picker less the word, not measured itself; measure it if the row overflows.
+/** The picker with a flame in place of its label: the label's text out, the flame in. */
+const DRAWN_FLAME_PICKER = DRAWN_PICKER - 'Ember'.length * DRAWN_TEXT + DRAWN_FLAME
 /** A button less its label's text: its padding and the margin after it. */
 const DRAWN_BUTTON = 4.4
 /** The `ⓘ` that ends the row, with the gap before it. */
@@ -709,7 +714,7 @@ export const register: Register = (on, options) => {
       }
     })
     await pull($).catch(() => null)
-    await $.command.register({ name: 'agents-panel', description: 'Show or hide the subagents panel' }).catch(() => null)
+    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Agents panel: subagents and background work' }).catch(() => null)
     await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
     // Not awaited: a file hook that stalls must not hold up the session's start. Without it the card shows no version.
     void noteVersion($).catch(() => null)
@@ -920,8 +925,9 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
     const list = ordered(await read($, agents))
+    const bg = [...(await read($, background))].sort((a, b) => a.seenAt - b.seenAt)
     const now = await $.clock.now()
-    if (list.length === 0) return <Text dimColor>No subagents yet.</Text>
+    if (list.length === 0 && bg.length === 0) return <Text dimColor>No subagents yet.</Text>
 
     const width = Math.max(20, (e.props.bodyColumns ?? 60) - 34)
     return (
@@ -936,6 +942,14 @@ export const register: Register = (on, options) => {
               {a.model.replace('claude-', '')} · {fmtSpan((a.endedAt ?? now) - a.startedAt)} · {Math.round(a.tokens / 1000)}k
               {a.costUsd === null ? '' : ` · ≈${usd(a.costUsd)}`}
             </Text>
+          </Box>
+        ))}
+        {bg.length > 0 ? <Text key="bg-head" dimColor bold>Background</Text> : null}
+        {bg.map(b => (
+          <Box key={`bg-${b.id}`} flexDirection="row">
+            <Text color={ACCENT}>▸ </Text>
+            <Text>{clip(b.label, width)} </Text>
+            <Text dimColor>{`${b.kind || 'task'} · ${fmtSpan(now - b.seenAt)}`}</Text>
           </Box>
         ))}
       </Box>
@@ -961,18 +975,22 @@ export const register: Register = (on, options) => {
 
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
-    // Once any subagent has run the button stays, dimmed when none runs, so the panel's costs stay one press away.
-    const agentsLabel = runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents'
+    const bgRuns = await read($, background)
+    // Once any subagent has run the button stays, dimmed when nothing runs, so the panel's costs stay one press away.
+    // Background work brings it too, counted after the agents, and lights it while it runs.
+    const agentsLabel = [runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents', bgRuns.length > 0 ? `BG ${bgRuns.length}` : null].filter(Boolean).join(' · ')
     /** What a tight row draws on the button; the label still names it, for a screen reader. */
-    const tightAgents = runningAgents > 0 ? `A${runningAgents}` : 'A'
+    const tightAgents = [runningAgents > 0 ? `A${runningAgents}` : 'A', bgRuns.length > 0 ? `B${bgRuns.length}` : null].filter(Boolean).join(' ')
     const agentsButtonOf = (isTight: boolean) => (
       <Box key="agents" flexShrink={0} marginRight={1}>
-        <Button key="agents-toggle" label={agentsLabel} dimColor={runningAgents === 0} onPress={() => togglePane($)}>
+        <Button key="agents-toggle" label={agentsLabel} dimColor={runningAgents === 0 && bgRuns.length === 0} onPress={() => togglePane($)}>
           {isTight ? tightAgents : agentsLabel}
         </Button>
       </Box>
     )
-    const agentsButton = crew.length > 0 ? agentsButtonOf(false) : null
+    const agentsButton = crew.length > 0 || bgRuns.length > 0 ? agentsButtonOf(false) : null
+    /** The terminal's estimate of the button: `[ Agents 1 ]` at least, more with a background count. */
+    const agentsCells = Math.max(AGENTS_CELLS, agentsLabel.length + 4)
 
     const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
     // Drawings where the surface has them; text in a terminal.
@@ -985,7 +1003,6 @@ export const register: Register = (on, options) => {
       return [<Text key={`${key}-on`} color={colour}>{d.on}</Text>, <Text key={`${key}-off`} color={EMPTY}>{d.off}</Text>]
     }
     const steps = await read($, plan)
-    const bgRuns = await read($, background)
     // Between turns the step stays while the work it waits on runs.
     const isActive = e.props.isWorking || runningAgents > 0 || bgRuns.length > 0
     const step = steps && isActive ? currentOf(steps) : undefined
@@ -1064,7 +1081,14 @@ export const register: Register = (on, options) => {
     // Only while a ping can still come: not mid-turn, not too late, not a cache it cannot hold.
     const hold = { now, lastAt: facts?.lastAt ?? 0, lastPromptAt, capMs, isBusy: inTurn, untilAt }
     const emberMs = view && view.mode !== 'cold' && facts && canHold(facts, ttlMs) ? emberLeftMs(hold) : 0
-    const ember = emberMs > 0 ? `ember ${fmtIdle(emberMs)}` : null
+    /** Keep-warm's time left while it holds: after a flame where the surface draws, after the word in a terminal. */
+    const emberLeft = emberMs > 0 ? fmtIdle(emberMs) : null
+    const ember = emberLeft === null ? null : Svg ? emberLeft : `ember ${emberLeft}`
+    const flame = (key: string, isLit: boolean, isMoving: boolean, alt: string) =>
+      // SMIL runs only in an interactive frame on the desktop, as for Robo.
+      Svg ? <Svg key={key} source={flameSvg(isLit, isMoving)} alt={alt} width={FLAME_W} height={FLAME_H} isInteractive={isMoving} /> : null
+    /** The countdown's own flame stays still: the picker's flickers, and one moving flame is enough. */
+    const emberMark = Svg && emberLeft !== null ? [<Text key="ember-gap"> </Text>, flame('ember-flame', true, false, 'Keep-warm holding')] : null
     const capValue = capMs === null ? 'off' : windowLabel(held)
     const pickLabel = (value: string) => (value === 'off' ? 'Off' : value.startsWith('until ') ? `Until ${value.slice(6)}` : value)
     const minsLeft = view ? Math.max(0, view.ttlMin - view.idleMin) : 0
@@ -1093,15 +1117,16 @@ export const register: Register = (on, options) => {
         (open
           ? 0
           : DRAWN_SEP + (ROBO_SIZE + chipSvg(view.mode).w) / DRAWN_PX + textW(' ') +
-            textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`)) +
-        (Select ? DRAWN_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
+            textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`) +
+            (view.mode !== 'cold' && emberMark ? DRAWN_FLAME : 0)) +
+        (Select ? DRAWN_FLAME_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
         (agentsButton ? DRAWN_BUTTON + textW(isTight ? tightAgents : agentsLabel) : 0) +
         DRAWN_FOLD
     const fullNeeds = drawnNeedsOf(false)
     const isTight = Svg !== null && !!view && fullNeeds > columns && drawnNeedsOf(true) <= columns
     const drawnNeeds = isTight ? drawnNeedsOf(true) : fullNeeds
     const wideNeeds =
-      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? AGENTS_CELLS : 0) + forecasts * PACE_CELLS
+      ROW_CELLS + WARM_CELLS + FILL_CELLS + Math.max(1, list.length) * WINDOW_CELLS + (agentsButton ? agentsCells : 0) + forecasts * PACE_CELLS
     const tooWide = Svg ? drawnNeeds > columns : forecasts > 0 && wideNeeds > columns
     const kind = kindOf(columns) === 'wide' && view && tooWide ? 'stacked' : kindOf(columns)
     const isWide = kind === 'wide'
@@ -1128,7 +1153,7 @@ export const register: Register = (on, options) => {
       return `${p.used}%`.length + (p.out ? ` · out ~${p.out}`.length : 0) + 3
     }
     const rowCells = list.reduce((n, w) => n + Math.max(STACK_CELLS, shareCells(w)), 0)
-    const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + (agentsButton ? AGENTS_CELLS : 0)
+    const besideCells = kind === 'tight' ? 0 : (view ? BLOCK_CELLS + WARM_CELLS + 3 : 0) + (agentsButton ? agentsCells : 0)
     const isOutBeside = rowCells + besideCells <= columns
 
     const stacked = (w: Window, i: number) => {
@@ -1180,11 +1205,13 @@ export const register: Register = (on, options) => {
     const offered = [...new Set([...WARM_PICKS, ...untilChoices(now, UNTIL_PICKS).map(t => `until ${fmtClock(t)}`)])]
     const picks = offered.includes(capValue) ? offered : [...offered, capValue]
     const warmButton = (
-      <Box key="warm" flexShrink={0} marginRight={1}>
+      <Box key="warm" flexDirection="row" flexShrink={0} marginRight={1} alignItems="center">
+        {Select && Svg ? flame('warm-flame', capMs !== null, capMs !== null, capMs === null ? 'Ember keep-warm, off' : 'Ember keep-warm, on') /* read just before the picker, it names it */ : null}
+        {Select && Svg ? <Text key="warm-flame-gap"> </Text> : null}
         {Select ? (
           <Select
             key="warm-pick"
-            label="Ember"
+            label={Svg ? undefined : 'Ember'}
             value={capValue}
             options={[
               ...picks.map(value => ({ value, label: pickLabel(value) })),
@@ -1203,7 +1230,7 @@ export const register: Register = (on, options) => {
     // Against the full row: a tightened row has none to spare, as the extras go before it tightens.
     const spare = Svg
       ? columns - fullNeeds
-      : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? AGENTS_CELLS : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
+      : columns - ROW_CELLS - WARM_CELLS - FILL_CELLS - Math.max(1, list.length) * WINDOW_CELLS - (agentsButton ? agentsCells : 0) - (ember ? ember.length + 1 - COUNTDOWN_CELLS : 0) - forecasts * PACE_CELLS
     const hitCells = Svg ? (hitLabel ? textW(` · ${hitLabel}`) : 0) : HIT_CELLS
     const miniCells = Svg ? textW(' ') + MINI_W / DRAWN_PX : MINI_CELLS
     const costText = facts?.costUsd !== undefined ? ` · ${usd(facts.costUsd)}` : null
@@ -1233,6 +1260,7 @@ export const register: Register = (on, options) => {
           myCost !== null ? <Text key="cost" color={TEXT} bold>{usd(myCost)}</Text> : null,
         ]
       : [
+          emberMark,
           ember
             ? <Text key="left" color={hue} bold>{` ${ember}`}</Text>
             : <Text key="left" color={warnMin !== null && minsLeft <= warnMin ? WARN : hue} bold>{` ${minsLeft}m`}</Text>,
@@ -1287,6 +1315,7 @@ export const register: Register = (on, options) => {
             <Box key="block" flexDirection="column" flexShrink={0} marginRight={2}>
               <Box flexDirection="row" alignItems="center">
                 {badge}
+                {cold ? null : emberMark}
                 <Text color={hue} bold>{` ${cold ? `${view.idle} idle` : (ember ?? `${minsLeft}m`)}`}</Text>
               </Box>
               {myCost !== null ? (
@@ -1362,7 +1391,7 @@ export const register: Register = (on, options) => {
                 ]}
             {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
             {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
-            {crew.length === 0 ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
+            {!agentsButton ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
             {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
           </Box>
         </Box>

@@ -11,9 +11,9 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 **The ribbon**
 - Each usage limit as a tick bar that fills as you use it, beside the share used, as the app counts it, and when it resets. Bar and share turn from green to yellow at 40%, orange at 70% and red at 85%. When your pace would use it up before the next reset, an amber `out ~2h 30m` says when. The pace is the faster of two: the average since the limit last reset, and the last 24 hours (the last hour for the 5-hour limit), read from usage readings every session keeps. A quiet day already behind you no longer stretches the week's forecast, and a quiet morning does not hide a busy week. It waits until a tenth of the window has passed (about 17 hours of a week), so one busy stretch does not swing it.
 - Context tokens and share of the window, always shown, with a small colour bar of what fills it when the row has room.
-- Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead (`ember 1h 50m`).
+- Cache WARM or COLD, with a countdown and the share of the last request the cache really served. While keep-warm holds, the countdown shows its time left instead, after a still flame (`ember 1h 50m` in the terminal).
 - The session's running cost at list price, when the row has room.
-- All of it on one row where it fits, judged in the app from widths measured on the desktop's own drawing. Short of room the row drops the cost, then the colour bar, then the hit share, then tightens: a shorter usage bar, no dot before the reset time, and `A` for the Agents button (`A2` while two run). Short of more, each limit and the cache stack as blocks, three lines each where the band allows.
+- All of it on one row where it fits, judged in the app from widths measured on the desktop's own drawing. Short of room the row drops the cost, then the colour bar, then the hit share, then tightens: a shorter usage bar, no dot before the reset time, and `A` for the Agents button (`A2` while two run, `A2 B1` with one background task). Short of more, each limit and the cache stack as blocks, three lines each where the band allows.
 
 **The upper row**
 - The current step of the task list, a step count and a rough time left. Like the app's list, it lasts across turns until the list is wrapped up, replaced or cleared with `/clear`, or you type a new prompt while nothing runs; between turns it shows while subagents or background work run.
@@ -27,12 +27,12 @@ Claude's prompt cache expires an hour after the last request. Come back later an
 - The cache hit of the last 20 requests as a strip of bars, a hit under 50% in amber.
 - While keep-warm holds, its time left and about when the cache will go cold.
 - After the first ping, this session's tally: pings, what they cost, what a re-cache would cost, and the last ping's time and tokens read.
-- The version this session runs, as `v1.6.1` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
+- The version this session runs, as `v1.6.2` after the settings, read from `plugin.json` when the session starts. When the ribbon runs from a plugin folder (`CLAUDE_CODE_PLUGIN_DIRS`), this is that folder's version, not the installed one.
 
 ![The expanded view: what fills the context, the cache with its hit strip, the next message's price on each model, and the Warn, Auto and Agents panel controls](docs/card.png)
 
 **On request**
-- An Agents button once any subagent has run (dimmed when none is running), and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` before any has run) with each subagent's model, time, tokens and estimated cost. `/clear` empties both.
+- An Agents button once any subagent has run, or while background work runs (`Agents 1 · BG 2`), dimmed when neither runs, and a panel (`/agents-panel`, or `Agents panel` behind `ⓘ` while the button is not on the ribbon) with each subagent's model, time, tokens and estimated cost, then each background task with its kind and age. `/clear` empties the subagents.
 - A notification before the cache goes cold, for sessions over 100k tokens: 10 minutes ahead by default, 5, or off (`warnMinutes`). With keep-warm off it weighs the two: what the re-cache will cost, and about what 2h of keep-warm from there would. Each notification starts with the session's folder and its opening prompt, as in `noesis · “Refactor the billing export so it strea…”: 508k tokens go cold in 10m`, so two sessions in one folder read apart.
 
 Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no card), with `/plugin configure emberline@claude-ribbon-emberline` at the prompt, or pipe a JSON object to `claude plugin configure emberline@claude-ribbon-emberline --values-stdin`.
@@ -41,7 +41,7 @@ Set options with `Warn` and `Auto` behind `ⓘ` (in the app; the terminal has no
 
 <img src="docs/picker.png" alt="The Ember picker: Off, 1h to 12h, three until times, Custom…, Ping now and Status" width="198" align="right">
 
-Pick 1h, 2h, 6h or 12h from the `Ember` picker on the ribbon, or run `/keep-warm 1h` to `12h`, `off` or `ping`. The picker also offers `Until` the next three full hours at least an hour away, and `Custom…`, which asks for any length or time the command takes. `/keep-warm until 18:30` takes any clock time within 12 hours: keep-warm holds to that time whatever you do in between, then switches off within the next half minute. `Ping now` in the same picker pings at once and shows what the cache served; `Status`, or `/keep-warm status`, says what keep-warm and the cache are doing. The mobile app has no picker: its row has an on and off button for 2h, and behind `ⓘ` a button steps through the lengths, beside `Ping now`, `Status` and the settings.
+Pick 1h, 2h, 6h or 12h from the picker behind the flame on the ribbon (`Ember` in the terminal; the flame is dim while keep-warm is off and flickers while it is on), or run `/keep-warm 1h` to `12h`, `off` or `ping`. The picker also offers `Until` the next three full hours at least an hour away, and `Custom…`, which asks for any length or time the command takes. `/keep-warm until 18:30` takes any clock time within 12 hours: keep-warm holds to that time whatever you do in between, then switches off within the next half minute. `Ping now` in the same picker pings at once and shows what the cache served; `Status`, or `/keep-warm status`, says what keep-warm and the cache are doing. The mobile app has no picker: its row has an on and off button for 2h, and behind `ⓘ` a button steps through the lengths, beside `Ping now`, `Status` and the settings.
 
 - 50 minutes after the last request, one small side request reads the cached conversation and resets the hour. No automatic ping runs while a turn is open, for example at a permission prompt.
 - It leaves no row in your conversation.

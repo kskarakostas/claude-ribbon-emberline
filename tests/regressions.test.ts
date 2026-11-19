@@ -388,8 +388,8 @@ test('a wide row short of room keeps tokens and drops the hit share first', asyn
   await start($, on)
   await reply($)
 
-  // The row needs about 73 cells at the measured widths, its hit share about 8 more.
-  const ui = await band($, false, 80)
+  // The row needs about 71 cells at the measured widths, its hit share about 8 more; under 78 the band stacks whatever it needs.
+  const ui = await band($, false, 78)
   expect(await ui.find({ type: 'Text', text: /^300k · 30%$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /% hit/ })).toBeUndefined()
   await ui.unmount()
@@ -677,6 +677,43 @@ test('a subagent ending refreshes the background list mid-turn', async ($, on) =
   await ui.unmount()
 })
 
+test('background work alone brings the Agents button, counted, and lit', async ($, on) => {
+  await start($, on, { rateLimits: TWO })
+  await reply($)
+  let ui = await band($)
+  expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
+  await ui.unmount()
+
+  await stop($, [SHELL, { ...SHELL, id: 'b2', description: 'Lint' }])
+  ui = await band($)
+  const button = await ui.find({ key: 'agents-toggle' })
+  expect(button?.props.label).toBe('Agents · BG 2')
+  expect(button?.props.dimColor).toBe(false)
+  await ui.unmount()
+
+  // A tight row (from about 94 to 114 cells here) shortens it as it shortens the agent count; the label still names it.
+  const tight = await band($, false, 104)
+  expect((await tight.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))?.props.width).toBe(60)
+  expect((await tight.find({ key: 'agents-toggle' }))?.text).toBe('A B2')
+  expect((await tight.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents · BG 2')
+  await tight.unmount()
+})
+
+test('the Agents panel lists background work with its kind and age, after the subagents', async ($, on) => {
+  const { clock } = await start($, on)
+  await reply($)
+  await stop($, [SHELL, { id: 'm1', type: 'monitor', status: 'running', description: 'Watch the deploy' }])
+  await clock.advance(120_000)
+
+  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Agents', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
+  expect(await pane.find({ text: /No subagents yet/ })).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: 'Background' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /Run the test suite/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'shell · 2m' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'monitor · 2m' })).toBeDefined()
+  await pane.unmount()
+})
+
 test('a shell with no description shows its kind, not its command line', async ($, on) => {
   await start($, on)
   await reply($)
@@ -744,7 +781,7 @@ test('a row too narrow for one part and +N more still says how many more', () =>
 })
 
 test('a lone part too long for the row clips, with no count of nothing more', () => {
-  const text = runningLabel([], [], [{ id: 'b1', label: 'Run the full integration test suite', seenAt: NOW }], NOW, 20) ?? ''
+  const text = runningLabel([], [], [{ id: 'b1', label: 'Run the full integration test suite', kind: 'shell', seenAt: NOW }], NOW, 20) ?? ''
   expect(text).toBe('Run the full integr…')
 })
 

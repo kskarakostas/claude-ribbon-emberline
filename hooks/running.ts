@@ -32,6 +32,7 @@ export const backgroundFrom = (tasks: readonly BackgroundTask[], held: readonly 
       id: t.id,
       // Not the command line: a bare one reads as `F=/tmp/…`. The type says 'shell'.
       label: t.description || t.type,
+      kind: t.type,
       seenAt: held.find(h => h.id === t.id)?.seenAt ?? now,
     }))
 
@@ -45,7 +46,8 @@ const textOf = (value: unknown): string | null => (typeof value === 'string' && 
 export const startedBackground = (tool: string, args: { description?: unknown }, result: unknown, now: number): BackgroundRun | null => {
   const r = (result ?? {}) as { backgroundTaskId?: unknown; taskId?: unknown }
   const id = tool === 'Bash' ? textOf(r.backgroundTaskId) : tool === 'Monitor' ? textOf(r.taskId) : null
-  return id ? { id, label: textOf(args.description) ?? (tool === 'Bash' ? 'shell' : 'monitor'), seenAt: now } : null
+  const kind = tool === 'Bash' ? 'shell' : 'monitor'
+  return id ? { id, label: textOf(args.description) ?? kind, kind, seenAt: now } : null
 }
 
 /** The task a TaskStop call stopped, or null. */

@@ -30,7 +30,7 @@ test('a warm cache shows Robo, the WARM chip and the minutes left, folded', asyn
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: PROPS })
   // Drawings keep no key in the kit, so they are found by what they say.
   const alts = (await band.findAll({ type: 'Svg' })).map(s => s.props.alt)
-  expect(alts.filter(a => !String(a).endsWith('% used'))).toEqual(['Robo, bobbing', 'WARM'])
+  expect(alts.filter(a => !String(a).endsWith('% used'))).toEqual(['Robo, bobbing', 'WARM', 'Ember keep-warm, off'])
   expect(await band.find({ text: ' 42m' })).toBeDefined()
   expect(await band.find({ key: 'card' })).toBeUndefined()
   expect((await band.find({ key: 'cache-fold' }))?.props.label).toBe('ⓘ')

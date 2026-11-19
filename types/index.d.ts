@@ -32,8 +32,8 @@ export type Plan = { steps: PlanStep[]; stepStartedAt: number; durations: number
 /** A shell command or connector call in flight. */
 export type ToolRun = { id: number; name: string; startedAt: number }
 
-/** Background work the engine listed at a turn's end, and when the band first saw it. */
-export type BackgroundRun = { id: string; label: string; seenAt: number }
+/** Background work in flight, its kind (`shell`, `monitor`, …), and when the band first saw it. */
+export type BackgroundRun = { id: string; label: string; kind: string; seenAt: number }
 
 /** What occupies the context, by category, against the window. */
 export type ContextMix = { rows: { name: string; tokens: number }[]; window: number }
