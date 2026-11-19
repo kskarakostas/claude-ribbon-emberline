@@ -14,7 +14,7 @@ const BAND = {
   view: {},
 } as const
 const PANE = {
-  title: 'Act',
+  title: 'Running',
   isFocused: false,
   bodyColumns: 80,
   placement: 'dock',
@@ -58,7 +58,7 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
   expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('Act 1·0')
-  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Act: 1 subagent, 0 background tasks running')
+  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Act 1·0')
   await band.unmount()
 
   const ui = await pane($)
@@ -72,7 +72,7 @@ test('with nothing run the button still shows, Act 0·0, dimmed', async ($, on) 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
   const button = await band.find({ key: 'agents-toggle' })
   expect(button?.text).toBe('Act 0·0')
-  expect(button?.props.label).toBe('Act: 0 subagents, 0 background tasks running')
+  expect(button?.props.label).toBe('Act 0·0')
   expect(button?.props.dimColor).toBe(true)
   await band.unmount()
 })
@@ -146,7 +146,7 @@ test('Haiku 5.5 is priced by prompt size: the low rate up to 100k, the high rate
   expect(Math.abs((costOf('claude-haiku-5-5', MTOK) ?? 0) - (0.5 + 0.05 + 1)) < 1e-6).toBe(true)
 })
 
-test('/clear empties the Act panel and sets its button back to 0: a new conversation has run no subagents', async ($, on) => {
+test('/clear empties the Running panel and sets its button back to 0: a new conversation has run no subagents', async ($, on) => {
   await start($, on)
   await spawn($)
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })

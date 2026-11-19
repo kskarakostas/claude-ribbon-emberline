@@ -175,7 +175,7 @@ test('short of room for the full row, the row tightens before it stacks: a short
     const seen = {
       isRow: (await ui.find({ key: 'usage' })) !== undefined,
       agents: (await ui.find({ key: 'agents-toggle' }))?.text,
-      named: (await ui.find({ key: 'agents-toggle' }))?.props.label, // what a screen reader announces
+      named: (await ui.find({ key: 'agents-toggle' }))?.props.label, // what the desktop draws: it must match the text
       bar: bar?.props.width,
       dot: (await ui.find({ type: 'Text', text: /^ · 5d 0h$/ })) !== undefined,
     }
@@ -183,8 +183,8 @@ test('short of room for the full row, the row tightens before it stacks: a short
     return seen
   }
   // The full row needs about 95 cells with the running agent, the tight one about 85.
-  expect(await at(110)).toEqual({ isRow: true, agents: 'Act 1·0', named: 'Act: 1 subagent, 0 background tasks running', bar: 100, dot: true })
-  expect(await at(88)).toEqual({ isRow: true, agents: '1·0', named: 'Act: 1 subagent, 0 background tasks running', bar: 60, dot: false })
+  expect(await at(110)).toEqual({ isRow: true, agents: 'Act 1·0', named: 'Act 1·0', bar: 100, dot: true })
+  expect(await at(88)).toEqual({ isRow: true, agents: '1·0', named: '1·0', bar: 60, dot: false })
   expect((await at(81)).isRow).toBe(false)
 })
 

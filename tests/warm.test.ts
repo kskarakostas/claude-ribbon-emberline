@@ -1370,13 +1370,13 @@ test('on mobile the expanded view steps through the lengths and gives Ping now, 
   await ui.unmount()
 })
 
-test('the Act button is on the ribbon from the start and opens the Act panel; the card needs no second way in', async ($, on) => {
+test('the Act button is on the ribbon from the start and opens the Running panel; the card needs no second way in', async ($, on) => {
   const { clock, opened } = await start($, on)
   const ui = await openCard($, clock)
   expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('Act 0·0')
   expect(await ui.find({ key: 'agents-open' })).toBeUndefined()
   await ui.press({ key: 'agents-toggle' })
-  expect(opened).toEqual(['emberline-agents:Act'])
+  expect(opened).toEqual(['emberline-agents:Running'])
   await ui.unmount()
 })
 

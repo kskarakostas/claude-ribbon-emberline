@@ -94,7 +94,7 @@ const UNTIL_PICKS = 3
 type PingGuard = { isPinging: boolean }
 
 const PANE = 'emberline-agents'
-const PANE_TITLE = 'Act'
+const PANE_TITLE = 'Running'
 const UPDATE_PLAN = 'mcp__ccd_turn__update_plan'
 const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 /** Below this a cold start is cheap, so no notification. PROPOSED, tune from use. */
@@ -714,7 +714,7 @@ export const register: Register = (on, options) => {
       }
     })
     await pull($).catch(() => null)
-    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Act panel: subagents and background tasks' }).catch(() => null)
+    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Running panel: subagents and background tasks' }).catch(() => null)
     await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
     // Not awaited: a file hook that stalls must not hold up the session's start. Without it the card shows no version.
     void noteVersion($).catch(() => null)
@@ -742,7 +742,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'agents-panel' }, async $ => {
     await togglePane($)
-    return { text: 'Act panel toggled.' }
+    return { text: 'Running panel toggled.' }
   })
 
   // The app summarises an idle session over 200k at 54 minutes, which would swap out the
@@ -986,19 +986,18 @@ export const register: Register = (on, options) => {
     const bgRuns = await read($, background)
     // The Act button, always on the ribbon as a banner of what runs: running subagents first, background
     // tasks second (`Act 1·2`). Dimmed at 0·0, drawn as pressed while its panel is open.
-    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
     const counts = `${runningAgents}·${bgRuns.length}`
     const agentsText = `Act ${counts}`
     /** What a tight row draws on the button. */
     const tightAgents = counts
-    /** What a screen reader announces, the two counts named. */
-    const agentsLabel = `Act: ${plural(runningAgents, 'subagent')}, ${plural(bgRuns.length, 'background task')} running`
     const isPaneOpen = (await $.ui.panes().catch(() => [])).some(p => p.id === PANE)
+    // The label is the text drawn: the desktop draws a Button's label, not its children, so a longer
+    // spoken name would show, clipped, on the ribbon.
     const agentsButtonOf = (isTight: boolean) => (
       <Box key="agents" flexShrink={0} marginRight={1}>
         <Button
           key="agents-toggle"
-          label={agentsLabel}
+          label={isTight ? tightAgents : agentsText}
           variant={isPaneOpen ? 'primary' : undefined}
           dimColor={runningAgents === 0 && bgRuns.length === 0 && !isPaneOpen}
           onPress={() => togglePane($)}
