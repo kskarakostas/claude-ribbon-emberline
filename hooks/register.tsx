@@ -94,7 +94,7 @@ const UNTIL_PICKS = 3
 type PingGuard = { isPinging: boolean }
 
 const PANE = 'emberline-agents'
-const PANE_TITLE = 'Agents'
+const PANE_TITLE = 'Activity'
 const UPDATE_PLAN = 'mcp__ccd_turn__update_plan'
 const WRAP_UP = 'mcp__ccd_turn__wrap_up'
 /** Below this a cold start is cheap, so no notification. PROPOSED, tune from use. */
@@ -102,10 +102,10 @@ const WARN_TOKENS = 100_000
 const DEFAULT_WARN_MIN = 10
 
 // What a wide row spends, in cells: label, badge, countdown and fold button; each usage
-// window; the Agents button; then what the two optional readings need.
+// window; the activity button; then what the two optional readings need.
 const ROW_CELLS = 26
 const WINDOW_CELLS = 29
-const AGENTS_CELLS = 12
+const AGENTS_CELLS = 8
 const WARM_CELLS = 16
 const HIT_CELLS = 11
 const FILL_CELLS = 14
@@ -217,6 +217,7 @@ const whereOf = async ($: EngineInterface): Promise<string> => {
 const togglePane = async ($: EngineInterface): Promise<void> => {
   if ((await $.ui.panes()).some(p => p.id === PANE)) await $.ui.close({ id: PANE })
   else await $.ui.open({ id: PANE, title: PANE_TITLE })
+  $.ui.invalidate('ui.render') // the button shows pressed while the panel is open
 }
 
 const warnIfDue = async ($: EngineInterface, warnMin: number | null): Promise<void> => {
@@ -714,7 +715,7 @@ export const register: Register = (on, options) => {
       }
     })
     await pull($).catch(() => null)
-    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Agents panel: subagents and background work' }).catch(() => null)
+    await $.command.register({ name: 'agents-panel', description: 'Show or hide the Activity panel: subagents and background tasks' }).catch(() => null)
     await $.command.register({ name: 'keep-warm', description: 'Keep this idle session\'s cache warm: 1h to 12h, until HH:MM, off, ping, or status' }).catch(() => null)
     // Not awaited: a file hook that stalls must not hold up the session's start. Without it the card shows no version.
     void noteVersion($).catch(() => null)
@@ -733,9 +734,16 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e)) // the band never holds up a prompt
 
+  // The panel's own close control lets the button go too.
+  on('ui.close', async ($, e, next) => {
+    const r = await next(e)
+    if (e.id === PANE) $.ui.invalidate('ui.render')
+    return r
+  })
+
   on('command.run', { command: 'agents-panel' }, async $ => {
     await togglePane($)
-    return { text: 'Agents panel toggled.' }
+    return { text: 'Activity panel toggled.' }
   })
 
   // The app summarises an idle session over 200k at 54 minutes, which would swap out the
@@ -927,11 +935,12 @@ export const register: Register = (on, options) => {
     const list = ordered(await read($, agents))
     const bg = [...(await read($, background))].sort((a, b) => a.seenAt - b.seenAt)
     const now = await $.clock.now()
-    if (list.length === 0 && bg.length === 0) return <Text dimColor>No subagents yet.</Text>
+    if (list.length === 0 && bg.length === 0) return <Text dimColor>No subagents or background tasks yet.</Text>
 
     const width = Math.max(20, (e.props.bodyColumns ?? 60) - 34)
     return (
       <Box flexDirection="column">
+        {list.length > 0 ? <Text key="ag-head" dimColor bold>{`Subagents · ${list.length}`}</Text> : null}
         {list.map(a => (
           <Box key={a.id} flexDirection="row">
             <Text color={a.status === 'failed' ? ERROR : a.status === 'done' ? MUTED : ACCENT}>
@@ -944,7 +953,7 @@ export const register: Register = (on, options) => {
             </Text>
           </Box>
         ))}
-        {bg.length > 0 ? <Text key="bg-head" dimColor bold>Background</Text> : null}
+        {bg.length > 0 ? <Text key="bg-head" dimColor bold>{`Background tasks · ${bg.length}`}</Text> : null}
         {bg.map(b => (
           <Box key={`bg-${b.id}`} flexDirection="row">
             <Text color={ACCENT}>▸ </Text>
@@ -976,21 +985,32 @@ export const register: Register = (on, options) => {
     const crew = await read($, agents)
     const runningAgents = crew.filter(a => a.status === 'running').length
     const bgRuns = await read($, background)
-    // Once any subagent has run the button stays, dimmed when nothing runs, so the panel's costs stay one press away.
-    // Background work brings it too, counted after the agents, and lights it while it runs.
-    const agentsLabel = [runningAgents > 0 ? `Agents ${runningAgents}` : 'Agents', bgRuns.length > 0 ? `BG ${bgRuns.length}` : null].filter(Boolean).join(' · ')
-    /** What a tight row draws on the button; the label still names it, for a screen reader. */
-    const tightAgents = [runningAgents > 0 ? `A${runningAgents}` : 'A', bgRuns.length > 0 ? `B${bgRuns.length}` : null].filter(Boolean).join(' ')
+    // The Activity button: AG counts running subagents, BG background tasks. Once any subagent has run AG stays,
+    // so the panel's costs stay one press away; background work brings the button too. Dimmed when nothing runs,
+    // and drawn as pressed while its panel is open.
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+    const agentsText = [crew.length > 0 ? (runningAgents > 0 ? `AG ${runningAgents}` : 'AG') : null, bgRuns.length > 0 ? `BG ${bgRuns.length}` : null].filter(Boolean).join(' · ')
+    /** What a tight row draws on the button. */
+    const tightAgents = [crew.length > 0 ? (runningAgents > 0 ? `A${runningAgents}` : 'A') : null, bgRuns.length > 0 ? `B${bgRuns.length}` : null].filter(Boolean).join(' ')
+    /** What a screen reader announces, the abbreviations spelt out. */
+    const agentsLabel = ['Activity', runningAgents > 0 ? `${plural(runningAgents, 'subagent')} running` : null, bgRuns.length > 0 ? plural(bgRuns.length, 'background task') : null].filter(Boolean).join(', ')
+    const isPaneOpen = (await $.ui.panes().catch(() => [])).some(p => p.id === PANE)
     const agentsButtonOf = (isTight: boolean) => (
       <Box key="agents" flexShrink={0} marginRight={1}>
-        <Button key="agents-toggle" label={agentsLabel} dimColor={runningAgents === 0 && bgRuns.length === 0} onPress={() => togglePane($)}>
-          {isTight ? tightAgents : agentsLabel}
+        <Button
+          key="agents-toggle"
+          label={agentsLabel}
+          variant={isPaneOpen ? 'primary' : undefined}
+          dimColor={runningAgents === 0 && bgRuns.length === 0 && !isPaneOpen}
+          onPress={() => togglePane($)}
+        >
+          {isTight ? tightAgents : agentsText}
         </Button>
       </Box>
     )
     const agentsButton = crew.length > 0 || bgRuns.length > 0 ? agentsButtonOf(false) : null
-    /** The terminal's estimate of the button: `[ Agents 1 ]` at least, more with a background count. */
-    const agentsCells = Math.max(AGENTS_CELLS, agentsLabel.length + 4)
+    /** The terminal's estimate of the button: `[ AG 1 ]` at least, more with a background count. */
+    const agentsCells = Math.max(AGENTS_CELLS, agentsText.length + 4)
 
     const sep = (key: string) => <Text key={key} color={MUTED}>{'  │  '}</Text>
     // Drawings where the surface has them; text in a terminal.
@@ -1100,7 +1120,7 @@ export const register: Register = (on, options) => {
     }
 
     // Where the wide row would pass the band, it tightens first: a shorter usage bar, no dot before the
-    // reset, A for Agents. Past that, the cache stacks. A drawn surface sums what the row shows at its
+    // reset, A1 B2 for the activity button. Past that, the cache stacks. A drawn surface sums what the row shows at its
     // measured widths, hit share left out (it shows only with room to spare). The terminal keeps its
     // estimates, never tightens, and stacks only for forecasts.
     const textW = (text: string) => text.length * DRAWN_TEXT
@@ -1120,7 +1140,7 @@ export const register: Register = (on, options) => {
             textW(view.mode === 'cold' ? ` ${view.idle}${myCost !== null ? ` · ${usd(myCost)}` : ''}` : ` ${ember ?? `${minsLeft}m`}`) +
             (view.mode !== 'cold' && emberMark ? DRAWN_FLAME : 0)) +
         (Select ? DRAWN_FLAME_PICKER + textW(pickLabel(capValue)) : DRAWN_BUTTON + textW(capMs === null ? 'Ember' : `Ember ${windowLabel(held)}`)) +
-        (agentsButton ? DRAWN_BUTTON + textW(isTight ? tightAgents : agentsLabel) : 0) +
+        (agentsButton ? DRAWN_BUTTON + textW(isTight ? tightAgents : agentsText) : 0) +
         DRAWN_FOLD
     const fullNeeds = drawnNeedsOf(false)
     const isTight = Svg !== null && !!view && fullNeeds > columns && drawnNeedsOf(true) <= columns
@@ -1391,7 +1411,7 @@ export const register: Register = (on, options) => {
                 ]}
             {choice('set-warn', 'Warn', warnValue, WARN_PICKS, v => (v === 'off' ? 'off' : `${v}m`), v => void setOption($, 'warnMinutes', v))}
             {choice('set-auto', 'Auto', autoValue, WARM_PICKS, v => v, v => void setOption($, 'autoKeepWarm', v))}
-            {!agentsButton ? <Button key="agents-open" label="Agents panel" dimColor onPress={() => togglePane($)} /> : null}
+            {!agentsButton ? <Button key="agents-open" label="Activity panel" dimColor onPress={() => togglePane($)} /> : null}
             {shown ? <Text key="version" color={MUTED}>{`v${shown}`}</Text> : null}
           </Box>
         </Box>

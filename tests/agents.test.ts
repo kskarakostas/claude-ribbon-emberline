@@ -57,7 +57,8 @@ test('a spawned agent gets a band button and a pane row', async ($, on) => {
   await spawn($)
 
   const band = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'AbovePrompt', props: BAND })
-  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents 1')
+  expect((await band.find({ key: 'agents-toggle' }))?.text).toBe('AG 1')
+  expect((await band.find({ key: 'agents-toggle' }))?.props.label).toBe('Activity, 1 subagent running')
   await band.unmount()
 
   const ui = await pane($)
@@ -142,7 +143,7 @@ test('Haiku 5.5 is priced by prompt size: the low rate up to 100k, the high rate
   expect(Math.abs((costOf('claude-haiku-5-5', MTOK) ?? 0) - (0.5 + 0.05 + 1)) < 1e-6).toBe(true)
 })
 
-test('/clear empties the Agents panel and drops its button: a new conversation has run no subagents', async ($, on) => {
+test('/clear empties the Activity panel and drops its button: a new conversation has run no subagents', async ($, on) => {
   await start($, on)
   await spawn($)
   await ($.classic.SessionStart as (e: unknown) => Promise<unknown>)({ source: 'clear' })
@@ -151,6 +152,6 @@ test('/clear empties the Agents panel and drops its button: a new conversation h
   expect(await band.find({ key: 'agents-toggle' })).toBeUndefined()
   await band.unmount()
   const ui = await pane($)
-  expect(await ui.find({ text: /No subagents yet/ })).toBeDefined()
+  expect(await ui.find({ text: /No subagents or background tasks yet/ })).toBeDefined()
   await ui.unmount()
 })

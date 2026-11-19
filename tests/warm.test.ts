@@ -61,7 +61,7 @@ const start = async ($: Engine, on: On, fork: Fork = GOOD, now: number = NOW, sl
   const opened: string[] = []
   on('ui.panes', () => ({ value: [] }) as never)
   on('ui.open', (_, e) => {
-    opened.push(e.id)
+    opened.push(`${e.id}:${e.title}`)
     return { value: { isPlaced: true } } as never
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -1370,12 +1370,13 @@ test('on mobile the expanded view steps through the lengths and gives Ping now, 
   await ui.unmount()
 })
 
-test('the expanded view opens the Agents panel before any subagent has run', async ($, on) => {
+test('the expanded view opens the Activity panel while the activity button is not on the ribbon', async ($, on) => {
   const { clock, opened } = await start($, on)
   const ui = await openCard($, clock)
   expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
   await ui.press({ key: 'agents-open' })
-  expect(opened).toEqual(['emberline-agents'])
+  expect(opened).toEqual(['emberline-agents:Activity'])
+  expect((await ui.find({ key: 'agents-open' }))?.props.label).toBe('Activity panel')
   await ui.unmount()
 })
 

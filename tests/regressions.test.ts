@@ -55,7 +55,21 @@ const start = async ($: Engine, on: On, o: Options = {}) => {
     return { value: { isSent: true, channel: 'test' } } as never
   })
   on('ui.toast', () => ({ value: undefined }) as never)
-  on('ui.invalidate', () => ({ value: undefined }) as never)
+  const redraws: string[] = []
+  on('ui.invalidate', (_, e) => {
+    redraws.push(String(e))
+    return { value: undefined } as never
+  })
+  const panes = new Set<string>()
+  on('ui.panes', () => ({ value: [...panes].map(id => ({ id, title: '', isShown: true, isFocused: false, isPlaced: true })) }) as never)
+  on('ui.open', (_, e) => {
+    panes.add(e.id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.close', (_, e) => {
+    panes.delete(e.id)
+    return { value: undefined } as never
+  })
   on('tool.call', async (_, e) => {
     await o.hold
     return { result: o.toolResult?.(e) ?? {} } as never
@@ -78,7 +92,7 @@ const start = async ($: Engine, on: On, o: Options = {}) => {
     } as never
   })
   await $.session.start({ surface: 'desktop', isInteractive: true, cwd: '/home/k/demo' })
-  return { clock, sent, asked }
+  return { clock, sent, asked, panes, redraws }
 }
 const step = async ($: Engine, agentId?: string) => {
   const stream = ($.turn.step as (e: unknown) => AsyncIterable<unknown>)({ turnId: 't', index: 0, model: MODEL, messageCount: 1, agentId })
@@ -677,7 +691,7 @@ test('a subagent ending refreshes the background list mid-turn', async ($, on) =
   await ui.unmount()
 })
 
-test('background work alone brings the Agents button, counted, and lit', async ($, on) => {
+test('background work alone brings the activity button, counted as BG, and lit', async ($, on) => {
   await start($, on, { rateLimits: TWO })
   await reply($)
   let ui = await band($)
@@ -687,31 +701,74 @@ test('background work alone brings the Agents button, counted, and lit', async (
   await stop($, [SHELL, { ...SHELL, id: 'b2', description: 'Lint' }])
   ui = await band($)
   const button = await ui.find({ key: 'agents-toggle' })
-  expect(button?.props.label).toBe('Agents · BG 2')
+  expect(button?.text).toBe('BG 2') // no subagent has run: no AG part
+  expect(button?.props.label).toBe('Activity, 2 background tasks')
   expect(button?.props.dimColor).toBe(false)
   await ui.unmount()
 
   // A tight row (from about 94 to 114 cells here) shortens it as it shortens the agent count; the label still names it.
   const tight = await band($, false, 104)
   expect((await tight.findAll({ type: 'Svg' })).find(s => String(s.props.alt).startsWith('7D'))?.props.width).toBe(60)
-  expect((await tight.find({ key: 'agents-toggle' }))?.text).toBe('A B2')
-  expect((await tight.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents · BG 2')
+  expect((await tight.find({ key: 'agents-toggle' }))?.text).toBe('B2')
+  expect((await tight.find({ key: 'agents-toggle' }))?.props.label).toBe('Activity, 2 background tasks')
   await tight.unmount()
 })
 
-test('the Agents panel lists background work with its kind and age, after the subagents', async ($, on) => {
+test('the Activity panel lists background work with its kind and age, after the subagents', async ($, on) => {
   const { clock } = await start($, on)
   await reply($)
   await stop($, [SHELL, { id: 'm1', type: 'monitor', status: 'running', description: 'Watch the deploy' }])
   await clock.advance(120_000)
 
   const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Agents', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
-  expect(await pane.find({ text: /No subagents yet/ })).toBeUndefined()
-  expect(await pane.find({ type: 'Text', text: 'Background' })).toBeDefined()
+  expect(await pane.find({ text: /No subagents/ })).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: 'Subagents' })).toBeUndefined() // a section shows only with rows
+  expect(await pane.find({ type: 'Text', text: 'Background tasks · 2' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /Run the test suite/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'shell · 2m' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'monitor · 2m' })).toBeDefined()
   await pane.unmount()
+})
+
+test('the Activity panel heads subagents and background tasks apart, each with its count', async ($, on) => {
+  await start($, on)
+  await reply($)
+  await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review the diff', subagentType: 'general-purpose', background: true })
+  await stop($, [SHELL])
+
+  const pane = await $.ui.mount({ plugin: 'emberline', surface: 'desktop', component: 'Pane', requestId: 'emberline-agents', props: { title: 'Activity', isFocused: false, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} } })
+  const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+  const at = (t: string) => texts.findIndex(x => x === t || x?.includes(t))
+  expect(at('Subagents · 1')).toBeGreaterThan(-1)
+  expect(at('Background tasks · 1')).toBeGreaterThan(at('Review the diff'))
+  expect(at('Run the test suite')).toBeGreaterThan(at('Background tasks · 1'))
+  await pane.unmount()
+})
+
+test('the activity button reads pressed while its panel is open, however the panel closes', async ($, on) => {
+  const { panes, redraws } = await start($, on)
+  await reply($)
+  await stop($, [SHELL])
+  // The app redraws on the invalidate each press sends; here a fresh mount reads the redraw.
+  const pressed = async (press?: boolean) => {
+    const ui = await band($)
+    const before = redraws.length
+    if (press) await ui.press({ key: 'agents-toggle' })
+    if (press) expect(redraws.length).toBeGreaterThan(before) // the press asks for the redraw
+    await ui.unmount()
+    const again = await band($)
+    const variant = (await again.find({ key: 'agents-toggle' }))?.props.variant
+    await again.unmount()
+    return variant
+  }
+  expect(await pressed()).toBeUndefined()
+  expect(await pressed(true)).toBe('primary')
+  expect(await pressed(true)).toBeUndefined()
+
+  // Closed from the panel's own control: the button lets go too.
+  expect(await pressed(true)).toBe('primary')
+  panes.delete('emberline-agents') // as the engine's record reads after the person's close
+  expect(await pressed()).toBeUndefined()
 })
 
 test('a shell with no description shows its kind, not its command line', async ($, on) => {
@@ -993,18 +1050,20 @@ test('the tokens stay on the ribbon at the width the app really uses, with agent
   await ui.unmount()
 })
 
-test('the Agents button counts running agents, and stays, dimmed, once they finish', async ($, on) => {
+test('the activity button counts running subagents as AG, and stays, dimmed, once they finish', async ($, on) => {
   await start($, on)
   await reply($)
   const ui = await band($)
   expect(await ui.find({ key: 'agents-toggle' })).toBeUndefined()
 
   await ($.agent.spawn as (e: unknown) => Promise<unknown>)({ prompt: 'x', description: 'Review', subagentType: 'general-purpose', background: true })
-  expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Agents 1')
+  expect((await ui.find({ key: 'agents-toggle' }))?.text).toBe('AG 1')
+  expect((await ui.find({ key: 'agents-toggle' }))?.props.label).toBe('Activity, 1 subagent running')
 
   await end($, 'answer', 'a1')
   const after = await ui.find({ key: 'agents-toggle' })
-  expect(after?.props.label).toBe('Agents')
+  expect(after?.text).toBe('AG')
+  expect(after?.props.label).toBe('Activity')
   expect(after?.props.dimColor).toBe(true)
   await ui.unmount()
 })
